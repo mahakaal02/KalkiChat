@@ -1,9 +1,19 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { Suspense, useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function LoginPage() {
+  // useSearchParams reads request-time URL data and must be wrapped in
+  // Suspense so Next.js doesn't try to fully statically render the page.
+  return (
+    <Suspense fallback={<main className="min-h-screen" />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const [stage, setStage] = useState<'password' | 'totp'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
