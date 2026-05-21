@@ -1,0 +1,51 @@
+# env
+.env
+.env.*
+!.env.example
+
+# go
+backend/bin/
+backend/tmp/
+*.test
+*.out
+
+# node / next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+*.iml
+.idea/
+*.lock # mobile/ has its own .gitignore that whitelists pubspec.lock if desired
+
+# os
+.DS_Store
+Thumbs.db
+
+# secrets
+*.pem
+!docs/**/*.pem
+*.p8
+*.key
+cosign.key
+
+# coverage
+coverage/
+*.lcov
+
+# vscode
+.vscode/
+
+# docker
+**/data/
+**/postgres-data/
+**/redis-data/
+**/minio-data/

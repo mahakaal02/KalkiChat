@@ -1,0 +1,39 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, prod]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-west-1
+      - uses: azure/setup-kubectl@v4
+      - name: Configure kubeconfig
+        run: aws eks update-kubeconfig --name kalki-${{ inputs.environment }}
+      - name: Apply migrations
+        run: kubectl apply -f deploy/k8s/base/jobs/migrate.yaml
+      - name: Wait for migrations
+        run: kubectl wait --for=condition=complete job/migrate --timeout=180s
+      - name: Rollout backend
+        run: |
+          kubectl set image deploy/backend backend=ghcr.io/${{ github.repository_owner }}/kalki-backend:${{ github.sha }}
+          kubectl set image deploy/retention retention=ghcr.io/${{ github.repository_owner }}/kalki-retention:${{ github.sha }}
+          kubectl set image deploy/admin-web admin-web=ghcr.io/${{ github.repository_owner }}/kalki-admin-web:${{ github.sha }}
+          kubectl rollout status deploy/backend
+          kubectl rollout status deploy/admin-web

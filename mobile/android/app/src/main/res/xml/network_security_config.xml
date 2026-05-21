@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+    <!-- SSL pin enforcement is performed at the HTTP-client layer (see
+         core/net/api_client.dart). We do NOT pin here because the system
+         picker conflicts with our SPKI hash-based pin set. -->
+</network-security-config>

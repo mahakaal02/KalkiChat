@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"     # WebSockets
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "12m"          # 10 MiB media + headroom
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$http_authorization $remote_addr"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: no-referrer";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.kalkichat.example]
+      secretName: api-tls
+  rules:
+    - host: api.kalkichat.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: backend, port: { number: 8080 } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-web
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [admin.kalkichat.example]
+      secretName: admin-tls
+  rules:
+    - host: admin.kalkichat.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: admin-web, port: { number: 3000 } } }

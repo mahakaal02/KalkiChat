@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+namespace: kalki
+images:
+  - name: ghcr.io/REPO/kalki-backend
+    newName: ghcr.io/your-org/kalki-backend
+  - name: ghcr.io/REPO/kalki-retention
+    newName: ghcr.io/your-org/kalki-retention
+  - name: ghcr.io/REPO/kalki-admin-web
+    newName: ghcr.io/your-org/kalki-admin-web
+patches:
+  - target: { kind: Deployment, name: backend }
+    patch: |
+      - { op: replace, path: /spec/replicas, value: 6 }
