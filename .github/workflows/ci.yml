@@ -64,7 +64,13 @@ jobs:
         uses: securego/gosec@master
         with:
           args: '-fmt sarif -out gosec.sarif backend/...'
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Upload gosec SARIF
+        # GitHub Code Scanning requires GHAS on private repos. Skip the upload
+        # there (the scan still runs; failures are visible in logs); on public
+        # repos / GHAS this populates the Security tab.
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: gosec.sarif
 
@@ -140,5 +146,8 @@ jobs:
           output: trivy.sarif
           severity: HIGH,CRITICAL
           exit-code: '1'
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Upload Trivy SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
         with: { sarif_file: trivy.sarif }
