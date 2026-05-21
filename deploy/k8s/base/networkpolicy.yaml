@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-egress
+spec:
+  podSelector:
+    matchLabels: { app: backend }
+  policyTypes: [Egress]
+  egress:
+    # DNS
+    - to: [{ namespaceSelector: {} }]
+      ports: [{ protocol: UDP, port: 53 }]
+    # Postgres / Redis / object storage (cluster-internal Services).
+    - to:
+        - podSelector: { matchLabels: { app: postgres } }
+        - podSelector: { matchLabels: { app: redis } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 6379 }
+    # External: S3 / Push providers.
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-allow
+spec:
+  podSelector:
+    matchLabels: { app: backend }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { name: ingress-nginx } } }]
+      ports: [{ protocol: TCP, port: 8080 }]

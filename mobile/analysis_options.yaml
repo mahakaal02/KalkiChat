@@ -1,0 +1,26 @@
+include: package:flutter_lints/flutter.yaml
+
+# Conservative ruleset for the scaffold. The aspirational settings
+# (`strict-casts`, `require_trailing_commas`, etc.) are kept commented
+# below so they can be re-enabled once the code is stylistically polished.
+
+analyzer:
+  errors:
+    invalid_annotation_target: ignore
+    missing_required_argument: error
+    must_call_super: error
+
+linter:
+  rules:
+    avoid_print: true
+    prefer_final_locals: true
+    unawaited_futures: true
+    use_super_parameters: true
+
+    # Disable the noisy "style nits" rules for now — the scaffold has many
+    # tactical TODOs and constructing them all as const churns reviews.
+    prefer_const_constructors: false
+    prefer_const_constructors_in_immutables: false
+    prefer_const_declarations: false
+    require_trailing_commas: false
+    prefer_single_quotes: false

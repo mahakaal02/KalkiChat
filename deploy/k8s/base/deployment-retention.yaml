@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retention
+  labels: { app: retention }
+spec:
+  replicas: 1                   # leader-elected via Redis lease anyway
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: retention }
+  template:
+    metadata:
+      labels: { app: retention }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: retention
+          image: ghcr.io/REPO/kalki-retention:replaced-by-ci
+          envFrom:
+            - configMapRef: { name: kalki-config }
+            - secretRef:    { name: kalki-secrets }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

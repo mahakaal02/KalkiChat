@@ -1,0 +1,68 @@
+name: kalki-prod
+
+services:
+  backend:
+    image: ghcr.io/your-org/kalki-backend:${TAG:?TAG required}
+    restart: always
+    depends_on: [postgres, redis]
+    env_file: ../.env
+    deploy:
+      replicas: 3
+      restart_policy: { condition: any }
+      resources:
+        limits: { cpus: '2', memory: '2G' }
+    networks: [internal, external]
+
+  retention:
+    image: ghcr.io/your-org/kalki-retention:${TAG}
+    restart: always
+    depends_on: [postgres, redis]
+    env_file: ../.env
+    deploy:
+      replicas: 1
+      resources:
+        limits: { cpus: '0.5', memory: '512M' }
+    networks: [internal]
+
+  admin-web:
+    image: ghcr.io/your-org/kalki-admin-web:${TAG}
+    restart: always
+    depends_on: [backend]
+    env_file: ../.env
+    deploy:
+      replicas: 2
+      resources:
+        limits: { cpus: '1', memory: '1G' }
+    networks: [internal, external]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: always
+    ports: ["443:443"]
+    volumes:
+      - ./nginx/api.conf:/etc/nginx/conf.d/api.conf:ro
+      - /etc/letsencrypt:/etc/nginx/tls:ro
+    networks: [external]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    env_file: ../.env
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: ["redisdata:/data"]
+    networks: [internal]
+
+networks:
+  internal:
+    internal: true
+  external:
+
+volumes:
+  pgdata:
+  redisdata:

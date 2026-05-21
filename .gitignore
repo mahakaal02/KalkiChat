@@ -1,0 +1,52 @@
+# env
+.env
+.env.*
+!.env.example
+
+# go
+backend/bin/
+backend/tmp/
+*.test
+*.out
+
+# node / next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+*.iml
+.idea/
+# Lockfiles in mobile/ are intentionally not ignored — Flutter apps should
+# commit pubspec.lock. We do NOT use a broad `*.lock` rule because it would
+# bite Cargo, composer, etc. if added later.
+
+# os
+.DS_Store
+Thumbs.db
+
+# secrets
+*.pem
+!docs/**/*.pem
+*.p8
+*.key
+cosign.key
+
+# coverage
+coverage/
+*.lcov
+
+# vscode
+.vscode/
+
+# docker volumes
+**/postgres-data/
+**/redis-data/
+**/minio-data/

@@ -1,0 +1,19 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    invalid_annotation_target: ignore
+    missing_required_argument: error
+    must_call_super: error
+
+linter:
+  rules:
+    avoid_print: true
+    prefer_final_locals: true
+    unawaited_futures: true
+    use_super_parameters: true
+    prefer_const_constructors: false
+    prefer_const_constructors_in_immutables: false
+    prefer_const_declarations: false
+    require_trailing_commas: false
+    prefer_single_quotes: false

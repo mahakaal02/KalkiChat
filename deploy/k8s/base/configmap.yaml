@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kalki-config
+data:
+  SERVER_ADDR: ":8080"
+  PUBLIC_BASE_URL: "https://api.kalkichat.example"
+  ALLOWED_ORIGINS: "https://admin.kalkichat.example"
+  JWT_ACCESS_TTL: "15m"
+  JWT_REFRESH_TTL: "168h"
+  ARGON2_MEMORY_KIB: "65536"
+  ARGON2_TIME: "3"
+  ARGON2_PARALLELISM: "2"
+  RETENTION_DAYS: "30"
+  RETENTION_SWEEP_INTERVAL: "60s"
+  S3_REGION: "eu-west-1"
+  S3_BUCKET: "kalki-prod-media"
+  S3_FORCE_PATH_STYLE: "false"
+  APNS_TOPIC: "com.kalkichat.app"
