@@ -5,7 +5,6 @@ import 'package:kalki_chat/core/crypto/envelope.dart';
 
 void main() {
   test('envelope round-trips through binary form', () async {
-    final Uint8List key = Uint8List.fromList(List<int>.generate(32, (i) => i));
     final Uint8List sender = Uint8List.fromList(List<int>.generate(16, (i) => i));
     final Uint8List recip = Uint8List.fromList(List<int>.generate(16, (i) => 16 + i));
     final Uint8List ratchet = Uint8List.fromList(List<int>.generate(32, (i) => i + 100));

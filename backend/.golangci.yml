@@ -1,0 +1,40 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - bodyclose
+    - gosec
+    - misspell
+    - revive
+    - unconvert
+
+linters-settings:
+  gosec:
+    excludes:
+      # G104: unhandled errors — handled selectively. Errcheck already flags
+      # the meaningful ones.
+      - G104
+      # G404: weak rng — only used for jitter; real crypto uses crypto/rand.
+      - G404
+  revive:
+    rules:
+      - name: exported
+        disabled: true   # We have doc comments where needed; not everywhere.
+
+issues:
+  exclude-rules:
+    # Tests are allowed to use os.Setenv etc.
+    - path: _test\.go
+      linters: [errcheck, gosec]
+  max-issues-per-linter: 0
+  max-same-issues: 0

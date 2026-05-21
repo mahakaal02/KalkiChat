@@ -11,7 +11,6 @@ import '../../core/net/ws_client.dart';
 import '../../core/security/keystore.dart';
 import '../../data/local_db.dart';
 import '../../env.dart';
-import '../auth/login_controller.dart';
 
 enum MessageDirection { incoming, outgoing }
 
@@ -43,15 +42,14 @@ class ChatState {
 
 final chatControllerProvider =
     StateNotifierProvider<ChatController, ChatState>((ref) {
-  return ChatController(ref);
+  return ChatController();
 });
 
 class ChatController extends StateNotifier<ChatState> {
-  ChatController(this._ref) : super(ChatState()) {
+  ChatController() : super(ChatState()) {
     _load();
   }
 
-  final Ref _ref;
   WsClient? _ws;
   LocalDb? _db;
 

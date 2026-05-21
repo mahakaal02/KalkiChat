@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5/middleware"
-
 	"github.com/kalkichat/backend/internal/crypto"
 )
 
@@ -98,6 +96,3 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
-func requestID(r *http.Request) string {
-	return middleware.GetReqID(r.Context())
-}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -228,6 +227,3 @@ func clientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
-
-// loginExpiresAt is exposed for tests.
-func loginExpiresAt(ttl time.Duration) int64 { return time.Now().Add(ttl).Unix() }

@@ -24,7 +24,9 @@ out/
 build/
 *.iml
 .idea/
-*.lock # mobile/ has its own .gitignore that whitelists pubspec.lock if desired
+# Lockfiles in mobile/ are intentionally not ignored — Flutter apps should
+# commit pubspec.lock. We do NOT use a broad `*.lock` rule because it would
+# bite Cargo, composer, etc. if added later.
 
 # os
 .DS_Store
@@ -44,8 +46,7 @@ coverage/
 # vscode
 .vscode/
 
-# docker
-**/data/
+# docker volumes
 **/postgres-data/
 **/redis-data/
 **/minio-data/
