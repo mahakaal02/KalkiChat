@@ -32,12 +32,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      await ref.read(loginControllerProvider.notifier).login(
-            userId: _userIdCtrl.text.trim(),
-            password: _passCtrl.text,
-          );
+      final LoginResult res =
+          await ref.read(loginControllerProvider.notifier).login(
+                userId: _userIdCtrl.text.trim(),
+                password: _passCtrl.text,
+              );
       if (!mounted) return;
-      context.go('/chat');
+      if (res.mustChangePassword) {
+        // Admin-provisioned account on first login — gate the user behind a
+        // forced change-password screen. The current password is the one
+        // they just typed; pass it through to save them retyping.
+        context.go('/change-password',
+            extra: <String, String>{'current': _passCtrl.text});
+      } else {
+        context.go('/chat');
+      }
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {

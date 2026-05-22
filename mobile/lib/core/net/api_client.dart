@@ -87,8 +87,16 @@ class ApiClient {
           {Map<String, dynamic>? query}) =>
       _dio.get<dynamic>(path, queryParameters: query);
 
-  Future<Response<dynamic>> post(String path, {Object? body}) =>
-      _dio.post<dynamic>(path, data: body);
+  Future<Response<dynamic>> post(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) =>
+      _dio.post<dynamic>(
+        path,
+        data: body,
+        options: headers == null ? null : Options(headers: headers),
+      );
 
   Future<Response<dynamic>> put(String path, {Object? body}) =>
       _dio.put<dynamic>(path, data: body);

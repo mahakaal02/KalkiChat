@@ -16,12 +16,22 @@ final loginControllerProvider =
   return LoginController(ref.read(apiClientProvider));
 });
 
+/// Result of a successful login: signals whether the next screen should be
+/// the regular chat home or the forced change-password gate.
+class LoginResult {
+  const LoginResult({required this.mustChangePassword});
+  final bool mustChangePassword;
+}
+
 class LoginController extends StateNotifier<AsyncValue<void>> {
   LoginController(this._api) : super(const AsyncData<void>(null));
 
   final ApiClient _api;
 
-  Future<void> login({required String userId, required String password}) async {
+  Future<LoginResult> login({
+    required String userId,
+    required String password,
+  }) async {
     state = const AsyncLoading<void>();
     try {
       final IdentityKeys keys = await IdentityKeys.initOrLoad();
@@ -48,9 +58,43 @@ class LoginController extends StateNotifier<AsyncValue<void>> {
       await HardwareKeystore.I.writeString('refresh_token', j['refresh_token'] as String);
       await HardwareKeystore.I.writeString('device_id', j['device_id'] as String);
       state = const AsyncData<void>(null);
+      return LoginResult(
+        mustChangePassword: j['must_change_password'] == true,
+      );
     } catch (e, s) {
       state = AsyncError<void>(e, s);
       rethrow;
+    }
+  }
+
+  /// POST /v1/auth/change-password. The bearer token from login is attached
+  /// by the ApiClient. On success the backend clears must_change_password
+  /// server-side; we don't need to refresh login state to clear it here.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final String? token =
+        await HardwareKeystore.I.readString('access_token');
+    if (token == null || token.isEmpty) {
+      throw Exception('NOT_LOGGED_IN');
+    }
+    final r = await _api.post(
+      '/v1/auth/change-password',
+      body: <String, dynamic>{
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      },
+      headers: <String, String>{'Authorization': 'Bearer $token'},
+    );
+    if (r.statusCode != 200) {
+      final Map<String, dynamic> err =
+          ((r.data as Map?) ?? <String, dynamic>{}).cast<String, dynamic>();
+      final String code =
+          (err['error'] is Map ? (err['error'] as Map)['code'] : null)
+                  ?.toString() ??
+              'CHANGE_FAILED';
+      throw Exception(code);
     }
   }
 

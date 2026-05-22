@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/auth/forced_password_change_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/splash_screen.dart';
 import '../features/chat/chat_screen.dart';
@@ -14,6 +15,16 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: <GoRoute>[
       GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      GoRoute(
+        path: '/change-password',
+        builder: (BuildContext _, GoRouterState s) {
+          final Map<String, String>? extra =
+              (s.extra as Map<String, String>?);
+          return ForcedPasswordChangeScreen(
+            initialCurrentPassword: extra?['current'],
+          );
+        },
+      ),
       GoRoute(path: '/chat', builder: (_, __) => const ChatScreen()),
       GoRoute(path: '/blocked', builder: (_, __) => const SecurityBlockScreen()),
     ],

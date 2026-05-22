@@ -1,7 +1,15 @@
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { UsersToolbar } from './UsersToolbar';
 
-type User = { id: string; login: string; status: string; created_at: string; last_login: string | null };
+type User = {
+  id: string;
+  login: string;
+  status: string;
+  created_at: string;
+  last_login: string | null;
+  must_change_password: boolean;
+};
 
 export default async function UsersPage({
   searchParams,
@@ -13,21 +21,12 @@ export default async function UsersPage({
   const users: User[] = r.ok ? r.data.users : [];
   return (
     <section className="space-y-5">
-      <h1 className="text-2xl font-semibold">Users</h1>
-      <form className="flex gap-2">
-        <input
-          name="q"
-          defaultValue={q}
-          placeholder="search by login"
-          className="input max-w-sm"
-        />
-        <button className="btn-primary">Search</button>
-      </form>
+      <UsersToolbar initialQuery={q} />
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-400 uppercase text-xs tracking-wider">
-              <th className="py-2">Login</th>
+              <th className="py-2">User ID</th>
               <th>Status</th>
               <th>Last login</th>
               <th></th>
@@ -36,7 +35,18 @@ export default async function UsersPage({
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className="border-t border-line/30">
-                <td className="py-2 font-mono">{u.login}</td>
+                <td className="py-2 font-mono">
+                  {u.login}
+                  {u.must_change_password && (
+                    <span
+                      className="ml-2 inline-block text-[10px] px-1.5 py-0.5 rounded
+                                 bg-amber-900/40 text-amber-300 align-middle"
+                      title="Must change password on first login"
+                    >
+                      PW RESET
+                    </span>
+                  )}
+                </td>
                 <td>
                   <span className={u.status === 'active' ? 'text-accent' : 'text-danger'}>
                     {u.status}

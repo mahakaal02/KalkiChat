@@ -78,6 +78,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware(signer))
 			r.Post("/auth/logout", authLogout(d))
+			r.Post("/auth/change-password", authChangePassword(d))
 			r.Post("/prekeys", prekeysUpload(d))
 			r.Get("/prekeys/{device_id}", prekeysFetch(d))
 			r.Get("/conversation/me", conversationGet(d))
@@ -95,6 +96,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(adminAuthMiddleware(signer))
 				r.Get("/users", adminListUsers(d))
+				r.Post("/users", adminCreateUser(d, rec))
 				r.Get("/users/{id}", adminGetUser(d))
 				r.Post("/users/{id}/suspend", adminSuspendUser(d, rec))
 				r.Post("/users/{id}/unsuspend", adminUnsuspendUser(d, rec))
