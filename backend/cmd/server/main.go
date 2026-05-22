@@ -43,7 +43,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := db.Migrate(cfg.DatabaseURL, "migrations"); err != nil &&
+	if err := db.Migrate(cfg.DatabaseURL, migrationsDir()); err != nil &&
 		!errors.Is(err, db.ErrNoChange) {
 		log.Fatal().Err(err).Msg("migrate")
 	}
@@ -103,4 +103,18 @@ func main() {
 	}
 	hub.Close()
 	log.Info().Msg("bye")
+}
+
+// migrationsDir returns the path to the migrations directory. Honours the
+// MIGRATIONS_DIR env var; falls back to "/migrations" (the container layout)
+// and finally to a working-dir-relative "migrations" path (for `go run` from
+// the backend/ folder).
+func migrationsDir() string {
+	if v := os.Getenv("MIGRATIONS_DIR"); v != "" {
+		return v
+	}
+	if _, err := os.Stat("/migrations"); err == nil {
+		return "/migrations"
+	}
+	return "migrations"
 }
