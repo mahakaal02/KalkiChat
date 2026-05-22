@@ -23,6 +23,74 @@ class DoubleRatchet {
     this.pn = 0,
   });
 
+  /// Initiator-side bootstrap: post-X3DH, generates a fresh ratchet sending
+  /// keypair and performs one root step against the responder's signed
+  /// prekey, leaving the ratchet ready to produce message keys immediately
+  /// via [nextSendKey]. The receive chain stays zero until the responder's
+  /// first reply triggers [ratchetReceive].
+  ///
+  /// `sharedSecret` is the 32-byte output of X3DH; `peerSignedPrekey` is the
+  /// responder's signed-prekey public (32 bytes, X25519) which the caller
+  /// has already verified in X3DH against the responder's Ed25519 identity.
+  static Future<DoubleRatchet> initiator({
+    required Uint8List sharedSecret,
+    required Uint8List peerSignedPrekey,
+  }) async {
+    if (sharedSecret.length != 32) {
+      throw ArgumentError('sharedSecret must be 32 bytes');
+    }
+    if (peerSignedPrekey.length != 32) {
+      throw ArgumentError('peerSignedPrekey must be 32 bytes');
+    }
+    final X25519 x = X25519();
+    final SimpleKeyPair kp = await x.newKeyPair();
+    final SimpleKeyPairData data = await kp.extract();
+    final SimplePublicKey pub = await kp.extractPublicKey();
+    final SecretKey dh = await x.sharedSecretKey(
+      keyPair: kp,
+      remotePublicKey:
+          SimplePublicKey(peerSignedPrekey, type: KeyPairType.x25519),
+    );
+    final List<int> dhBytes = await dh.extractBytes();
+    final (Uint8List rk, Uint8List ckSend) =
+        await _rootKdf(sharedSecret, dhBytes);
+    return DoubleRatchet(
+      rootKey: rk,
+      sendChainKey: ckSend,
+      recvChainKey: Uint8List(32),
+      dhSendPriv: Uint8List.fromList(data.bytes),
+      dhSendPub: Uint8List.fromList(pub.bytes),
+      dhRecvPub: Uint8List.fromList(peerSignedPrekey),
+    );
+  }
+
+  /// Responder-side bootstrap: post-X3DH, seeds the ratchet with the
+  /// responder's signed prekey as the initial DH sending pair. Both chain
+  /// keys are zero — the receive chain will be populated by the first
+  /// [ratchetReceive] call (triggered by the initiator's first envelope
+  /// carrying their fresh `ratchetPub`), and the send chain will be
+  /// populated as a side effect of that same call.
+  static DoubleRatchet responder({
+    required Uint8List sharedSecret,
+    required Uint8List signedPrekeyPriv,
+    required Uint8List signedPrekeyPub,
+  }) {
+    if (sharedSecret.length != 32) {
+      throw ArgumentError('sharedSecret must be 32 bytes');
+    }
+    if (signedPrekeyPriv.length != 32 || signedPrekeyPub.length != 32) {
+      throw ArgumentError('signedPrekey halves must be 32 bytes each');
+    }
+    return DoubleRatchet(
+      rootKey: Uint8List.fromList(sharedSecret),
+      sendChainKey: Uint8List(32),
+      recvChainKey: Uint8List(32),
+      dhSendPriv: Uint8List.fromList(signedPrekeyPriv),
+      dhSendPub: Uint8List.fromList(signedPrekeyPub),
+      dhRecvPub: Uint8List(32),
+    );
+  }
+
   Uint8List rootKey;
   Uint8List sendChainKey;
   Uint8List recvChainKey;

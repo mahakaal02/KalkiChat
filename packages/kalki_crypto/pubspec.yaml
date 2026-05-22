@@ -1,0 +1,20 @@
+name: kalki_crypto
+description: >
+  Shared end-to-end-encryption primitives for KalkiChat — Double Ratchet,
+  X25519/Ed25519 identity keys, and the on-the-wire Envelope format. Consumed
+  by both the user mobile app and the admin companion-device mobile app so
+  there is exactly one implementation of the protocol.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.4 <4.0.0"
+
+dependencies:
+  # Pure-Dart Ed25519/X25519/AES-GCM/HKDF. Matches the version pinned in
+  # mobile/pubspec.yaml today; bump both pubspecs in lockstep.
+  cryptography: ^2.7.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0

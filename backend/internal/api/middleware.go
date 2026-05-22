@@ -39,7 +39,10 @@ func authMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
 	}
 }
 
-// adminAuthMiddleware enforces admin auth via cookie-bound JWT.
+// adminAuthMiddleware enforces admin auth. Accepts the JWT from either
+// the admin_session cookie (admin web dashboard) or a Bearer header
+// (admin companion-device mobile app, post /v1/admin/devices/register).
+// Cookie takes precedence so the web flow stays unchanged.
 func adminAuthMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,12 +50,17 @@ func adminAuthMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handl
 				writeErr(w, http.StatusInternalServerError, "JWT_NOT_CONFIGURED", "")
 				return
 			}
-			cookie, err := r.Cookie("admin_session")
-			if err != nil {
+			var token string
+			if c, err := r.Cookie("admin_session"); err == nil {
+				token = c.Value
+			} else if b := bearer(r); b != "" {
+				token = b
+			}
+			if token == "" {
 				writeErr(w, http.StatusUnauthorized, "MISSING_SESSION", "")
 				return
 			}
-			c, err := signer.Verify(cookie.Value)
+			c, err := signer.Verify(token)
 			if err != nil || c.Owner != "admin" {
 				writeErr(w, http.StatusUnauthorized, "INVALID_SESSION", "")
 				return
