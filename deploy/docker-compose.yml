@@ -16,7 +16,8 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "5432:5432"
+      # Host 5433 → container 5432 (host's own Postgres typically owns 5432).
+      - "5433:5432"
 
   redis:
     image: redis:7-alpine
@@ -30,7 +31,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   minio:
     image: minio/minio:RELEASE.2024-10-13T13-34-11Z
@@ -47,8 +48,8 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9100:9000"
+      - "9101:9001"
 
   minio-init:
     image: minio/mc:RELEASE.2024-10-08T09-37-26Z
@@ -79,13 +80,12 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT: http://minio:9000
+    volumes:
+      - ../.secrets:/secrets:ro
     ports:
       - "8080:8080"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
+    # No HTTP healthcheck — distroless has no shell or wget. The /healthz
+    # endpoint is verified externally; K8s uses an httpGet probe instead.
 
   retention:
     build:
@@ -94,11 +94,13 @@ services:
     restart: unless-stopped
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started
     env_file: ../.env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../.secrets:/secrets:ro
 
   admin-web:
     build:
@@ -107,7 +109,7 @@ services:
     restart: unless-stopped
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started
     env_file: ../.env
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8080
