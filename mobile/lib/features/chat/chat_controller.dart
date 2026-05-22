@@ -7,10 +7,12 @@ import 'package:uuid/uuid.dart';
 
 import 'package:kalki_crypto/kalki_crypto.dart';
 
+import '../../core/net/api_client.dart';
 import '../../core/net/ws_client.dart';
 import '../../core/security/keystore.dart';
 import '../../data/local_db.dart';
 import '../../env.dart';
+import '../auth/login_controller.dart' show apiClientProvider;
 
 enum MessageDirection { incoming, outgoing }
 
@@ -42,14 +44,15 @@ class ChatState {
 
 final chatControllerProvider =
     StateNotifierProvider<ChatController, ChatState>((ref) {
-  return ChatController();
+  return ChatController(ref.read(apiClientProvider));
 });
 
 class ChatController extends StateNotifier<ChatState> {
-  ChatController() : super(ChatState()) {
+  ChatController(this._api) : super(ChatState()) {
     _load();
   }
 
+  final ApiClient _api;
   WsClient? _ws;
   LocalDb? _db;
 
@@ -77,45 +80,65 @@ class ChatController extends StateNotifier<ChatState> {
   Future<void> sendText(String text) async {
     final IdentityKeys keys = await IdentityKeys.initOrLoad(HardwareKeystore.I);
     final String? deviceId = await HardwareKeystore.I.readString('device_id');
-    final String? recipient =
-        await HardwareKeystore.I.readString('admin_device_id');
-    if (deviceId == null || recipient == null) {
-      // No paired admin device known yet — caller should fetch a prekey bundle
-      // and run X3DH. Surface a friendly message.
-      _appendLocal(MessageDirection.outgoing,
-          '(no admin session yet — pending pairing)');
+    if (deviceId == null) {
+      _appendLocal(MessageDirection.outgoing, '(not signed in)');
       return;
     }
 
-    final Uuid uuid = const Uuid();
-    final String clientId = uuid.v4();
+    // Resolve the target admin device. For this MVP we cache one in the
+    // keystore; if missing, we query the backend's active admin pool and
+    // pick the most-recently-seen device. Multi-admin fan-out (sealing the
+    // same plaintext to N admin devices in parallel) is a v2 follow-up.
+    String? peer = await HardwareKeystore.I.readString('admin_device_id');
+    if (peer == null) {
+      peer = await _resolveActiveAdminDevice();
+      if (peer == null) {
+        _appendLocal(MessageDirection.outgoing,
+            '(no admin device online — try again shortly)');
+        return;
+      }
+      await HardwareKeystore.I.writeString('admin_device_id', peer);
+    }
 
-    // For brevity this sample uses a per-message random key signed by Ed25519
-    // and protected by AES-GCM. In production this is the Double Ratchet
-    // message-key chain (see core/crypto/ratchet.dart).
-    final List<int> messageKey =
-        Uint8List.fromList(List<int>.generate(32, (_) => DateTime.now().microsecond & 0xFF));
-
+    final String clientId = const Uuid().v4();
     final Uint8List senderDev = _toDevBytes(deviceId);
-    final Uint8List recipDev = _toDevBytes(recipient);
+    final Uint8List recipDev = _toDevBytes(peer);
 
-    final ({Envelope envelope, List<int> signature}) sealed = await Envelope.seal(
+    // Load or bootstrap the ratchet for this peer.
+    DoubleRatchet? ratchet = await _db!.loadRatchet(peer);
+    BootstrapHeader? bootstrap;
+    if (ratchet == null) {
+      final _Bootstrapped? boot = await _bootstrapSessionTo(peer, keys);
+      if (boot == null) return; // friendly error already appended
+      ratchet = boot.ratchet;
+      bootstrap = boot.header;
+    }
+
+    // Derive the next sending message key and seal.
+    final Uint8List mk = await ratchet.nextSendKey();
+    final ({Envelope envelope, List<int> signature}) sealed =
+        await Envelope.seal(
       sign: keys.sign,
       senderDevId: senderDev,
       recipientDevId: recipDev,
-      ratchetPub: keys.xPubBytes,
-      msgNumber: state.messages.length,
-      prevChainLen: 0,
-      messageKey: messageKey,
+      ratchetPub: ratchet.dhSendPub,
+      msgNumber: ratchet.nSend - 1, // nextSendKey already incremented
+      prevChainLen: ratchet.pn,
+      messageKey: mk,
       plaintext: utf8.encode(text),
+      bootstrap: bootstrap,
     );
+
+    // Persist the advanced ratchet BEFORE we send — if delivery fails the
+    // outbox replays with the same envelope, not a re-encrypted one.
+    await _db!.saveRatchet(peer, ratchet);
 
     final Uint8List envBytes = sealed.envelope.toBytes();
     final Uint8List sig = Uint8List.fromList(sealed.signature);
 
     await _db!.insertOutgoing(
       id: clientId,
-      peerDeviceId: recipient,
+      peerDeviceId: peer,
       envelope: envBytes,
       plaintext: text,
     );
@@ -126,7 +149,7 @@ class ChatController extends StateNotifier<ChatState> {
       'id': clientId,
       'data': <String, dynamic>{
         'client_id': clientId,
-        'recipient_device_id': recipient,
+        'recipient_device_id': peer,
         'envelope': base64Encode(envBytes),
         'signature': base64Encode(sig),
       },
@@ -137,11 +160,115 @@ class ChatController extends StateNotifier<ChatState> {
     } else {
       await _db!.enqueueOutbox(
         clientId: clientId,
-        recipientDeviceId: recipient,
+        recipientDeviceId: peer,
         envelope: envBytes,
         signature: sig,
       );
     }
+  }
+
+  /// Calls GET /v1/admin-devices/active and returns the most-recently-seen
+  /// device id, or null if none are online.
+  Future<String?> _resolveActiveAdminDevice() async {
+    try {
+      final r = await _api.get('/v1/admin-devices/active');
+      if (r.statusCode != 200) return null;
+      final List<dynamic> list =
+          ((r.data as Map?)?['devices'] as List<dynamic>?) ?? const <dynamic>[];
+      if (list.isEmpty) return null;
+      return ((list.first as Map).cast<String, dynamic>())['device_id']
+          as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Fetches the peer's prekey bundle, verifies the signed prekey,
+  /// runs X3DH initiator, builds the matching bootstrap header. The caller
+  /// is expected to seal one envelope with this header — subsequent
+  /// messages in the session use type-0 envelopes.
+  Future<_Bootstrapped?> _bootstrapSessionTo(
+      String peerDeviceId, IdentityKeys keys) async {
+    final r = await _api.get('/v1/prekeys/$peerDeviceId');
+    if (r.statusCode != 200) {
+      _appendLocal(MessageDirection.outgoing,
+          '(could not fetch admin prekey bundle: HTTP ${r.statusCode})');
+      return null;
+    }
+    final Map<String, dynamic> bundle =
+        (r.data as Map).cast<String, dynamic>();
+
+    final Uint8List peerIdEd =
+        Uint8List.fromList(base64Decode(bundle['identity_ed25519'] as String));
+    final Uint8List peerIdX =
+        Uint8List.fromList(base64Decode(bundle['identity_x25519'] as String));
+    final Map<String, dynamic> spk =
+        (bundle['signed_prekey'] as Map).cast<String, dynamic>();
+    final int spkId = spk['id'] as int;
+    final Uint8List spkPub =
+        Uint8List.fromList(base64Decode(spk['pubkey'] as String));
+    final Uint8List spkSig =
+        Uint8List.fromList(base64Decode(spk['signature'] as String));
+
+    if (!await verifySignedPrekey(
+      signedPrekeyPub: spkPub,
+      signature: spkSig,
+      identityEd25519Pub: peerIdEd,
+    )) {
+      _appendLocal(MessageDirection.outgoing,
+          '(admin prekey signature failed — refusing to send)');
+      return null;
+    }
+
+    int opkId = 0;
+    Uint8List? opkPub;
+    if (bundle['one_time_prekey'] != null) {
+      final Map<String, dynamic> opk =
+          (bundle['one_time_prekey'] as Map).cast<String, dynamic>();
+      opkId = opk['id'] as int;
+      opkPub = Uint8List.fromList(base64Decode(opk['pubkey'] as String));
+    }
+
+    // X3DH initiate needs the X25519 *private* bytes. IdentityKeys
+    // deliberately doesn't expose them through its public API — but
+    // chat_controller is allowed to read its own keystore directly.
+    // We keep that boundary narrow: the bytes are only read here and
+    // are not stored anywhere beyond X3DH's internal HKDF.
+    final List<int>? ourXPriv =
+        await HardwareKeystore.I.readBytes('x25519_priv');
+    if (ourXPriv == null) {
+      _appendLocal(MessageDirection.outgoing,
+          '(local identity not provisioned — sign out and back in)');
+      return null;
+    }
+
+    final X3DHInitiateResult x3 = await x3dhInitiate(
+      ourIdentityX25519Priv: Uint8List.fromList(ourXPriv),
+      ourIdentityX25519Pub: keys.xPubBytes,
+      peerIdentityX25519Pub: peerIdX,
+      peerSignedPrekeyPub: spkPub,
+      peerOneTimePrekeyPub: opkPub,
+    );
+
+    final DoubleRatchet ratchet = await DoubleRatchet.initiator(
+      sharedSecret: x3.sharedSecret,
+      peerSignedPrekey: spkPub,
+    );
+
+    // Stash the peer's identity Ed25519 so we can verify the signatures on
+    // their later type-0 replies.
+    await HardwareKeystore.I
+        .writeBytes('peer_ed25519_$peerDeviceId', peerIdEd);
+
+    final BootstrapHeader header = BootstrapHeader(
+      identityEd25519: keys.edPubBytes,
+      identityX25519: keys.xPubBytes,
+      ephemeralX25519: x3.ephemeralX25519Pub,
+      signedPrekeyId: spkId,
+      oneTimePrekeyId: opkId,
+    );
+
+    return _Bootstrapped(ratchet: ratchet, header: header);
   }
 
   Future<void> _flushOutbox() async {
@@ -181,12 +308,84 @@ class ChatController extends StateNotifier<ChatState> {
   }
 
   Future<void> _handleIncoming(Map<String, dynamic> ev) async {
-    final Map<String, dynamic> d = (ev['data'] as Map).cast<String, dynamic>();
-    // Real decryption uses the ratchet's recv chain. For this scaffold we
-    // surface the ciphertext length as a placeholder.
+    final Map<String, dynamic> d =
+        (ev['data'] as Map).cast<String, dynamic>();
     final String envB64 = d['envelope'] as String;
-    final int approxBytes = base64.decode(envB64).length;
-    _appendLocal(MessageDirection.incoming, '[encrypted message · $approxBytes b]');
+    final String sigB64 = d['signature'] as String? ?? '';
+    final String senderDeviceId = d['sender_device_id'] as String? ?? '';
+
+    final Uint8List envBytes = base64.decode(envB64);
+    final Envelope env = Envelope.fromBytes(envBytes);
+    final Uint8List signature = Uint8List.fromList(base64.decode(sigB64));
+
+    if (env.isBootstrap) {
+      // A peer is starting a NEW session with us. The MVP user-mobile is
+      // initiator-only — admin devices reply within sessions the user
+      // started. If we ever land here it means a misconfiguration or a
+      // re-pairing flow we haven't built yet; surface the metadata
+      // without claiming to decrypt.
+      _appendLocal(MessageDirection.incoming,
+          '[bootstrap from $senderDeviceId · cannot decrypt — see /change-password flow]');
+      return;
+    }
+
+    // Steady-state envelope: must already have a ratchet for this peer.
+    final DoubleRatchet? ratchet = await _db!.loadRatchet(senderDeviceId);
+    if (ratchet == null) {
+      _appendLocal(MessageDirection.incoming,
+          '[no session with $senderDeviceId — cannot decrypt]');
+      return;
+    }
+
+    // Verify the signature against the peer identity we cached at
+    // bootstrap time. Reject if it doesn't match the claimed sender —
+    // the server is untrusted; only the peer's identity Ed25519 binds.
+    final List<int>? peerEd =
+        await HardwareKeystore.I.readBytes('peer_ed25519_$senderDeviceId');
+    if (peerEd == null) {
+      _appendLocal(MessageDirection.incoming,
+          '[missing peer identity for $senderDeviceId]');
+      return;
+    }
+    if (!await Envelope.verify(
+      envelope: env,
+      signature: signature,
+      signerIdentityEd25519Pub: Uint8List.fromList(peerEd),
+    )) {
+      _appendLocal(MessageDirection.incoming,
+          '[signature invalid from $senderDeviceId — discarded]');
+      return;
+    }
+
+    // Detect a DH ratchet rotation. The peer rotates their dhSendPub on
+    // every receive→send turn; ours rotates symmetrically on theirs.
+    if (!_bytesEqual(env.ratchetPub, ratchet.dhRecvPub)) {
+      await ratchet.ratchetReceive(env.ratchetPub);
+    }
+    final Uint8List mk = await ratchet.nextRecvKey();
+    try {
+      final List<int> pt = await Envelope.open(envelope: env, messageKey: mk);
+      await _db!.saveRatchet(senderDeviceId, ratchet);
+      final String text = utf8.decode(pt);
+      await _db!.insertIncoming(
+        id: const Uuid().v4(),
+        peerDeviceId: senderDeviceId,
+        envelope: envBytes,
+        plaintext: text,
+      );
+      _appendLocal(MessageDirection.incoming, text);
+    } catch (e) {
+      _appendLocal(MessageDirection.incoming,
+          '[decrypt failed: $e]');
+    }
+  }
+
+  static bool _bytesEqual(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   void _appendLocal(MessageDirection dir, String text) {
@@ -221,4 +420,13 @@ class ChatController extends StateNotifier<ChatState> {
     }
     return out;
   }
+}
+
+/// Return value of [ChatController._bootstrapSessionTo] — pairs the
+/// freshly-initialized ratchet with the bootstrap header to attach to
+/// the very first outgoing envelope.
+class _Bootstrapped {
+  _Bootstrapped({required this.ratchet, required this.header});
+  final DoubleRatchet ratchet;
+  final BootstrapHeader header;
 }

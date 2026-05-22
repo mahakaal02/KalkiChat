@@ -79,6 +79,9 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(authMiddleware(signer))
 			r.Post("/auth/logout", authLogout(d))
 			r.Post("/auth/change-password", authChangePassword(d))
+			// Active admin device pool — user mobile calls this when it
+			// has no cached admin device to seal a message to.
+			r.Get("/admin-devices/active", adminDevicesActive(d))
 			r.Post("/prekeys", prekeysUpload(d))
 			r.Get("/prekeys/{device_id}", prekeysFetch(d))
 			r.Get("/conversation/me", conversationGet(d))
