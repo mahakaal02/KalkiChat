@@ -1,7 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- The INTERNET permission is required for development. Specifically,
          the Flutter tool needs it to communicate with the running application
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!--
+      DEBUG-ONLY: swap the main manifest's strict networkSecurityConfig
+      (which blocks all cleartext) for a permissive one that allows HTTP
+      to 10.0.2.2 / localhost. Production / release builds keep the
+      strict policy from src/main/res/xml/network_security_config.xml.
+    -->
+    <application
+        tools:replace="android:networkSecurityConfig"
+        android:networkSecurityConfig="@xml/network_security_config_debug"/>
 </manifest>
