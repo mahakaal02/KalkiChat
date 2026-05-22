@@ -37,15 +37,30 @@ class _State extends ConsumerState<AdminTotpScreen> {
   bool _busy = false;
   String? _err;
 
+  // Read pending creds ONCE at mount. We deliberately don't `watch` the
+  // provider because _register clears the state to null on success, which
+  // would trigger a rebuild → spurious "no pending creds" branch →
+  // unwanted bounce to /login *after* we've already navigated to /users.
+  PendingAdminAuth? _pending;
+  bool _pendingResolved = false;
+
   @override
-  Widget build(BuildContext context) {
-    final PendingAdminAuth? pending = ref.watch(pendingAdminAuthProvider);
-    if (pending == null) {
-      // Defensive: somebody landed on /totp without going through /login
-      // first. Bounce them back to start the flow.
+  void initState() {
+    super.initState();
+    _pending = ref.read(pendingAdminAuthProvider);
+    _pendingResolved = true;
+    if (_pending == null) {
+      // Somebody landed on /totp directly. Bounce to /login.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) context.go('/login');
       });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final PendingAdminAuth? pending = _pending;
+    if (!_pendingResolved || pending == null) {
       return const Scaffold(body: SizedBox.shrink());
     }
 

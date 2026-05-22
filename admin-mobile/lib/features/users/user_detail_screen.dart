@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
 import '../../data/local_db.dart';
@@ -109,6 +110,16 @@ class _State extends ConsumerState<UserDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        // We navigate here via context.go('/users/<id>') which REPLACES
+        // the route rather than pushing onto a stack, so Flutter's
+        // automatic back button doesn't appear. An explicit leading
+        // IconButton always routes back to the chat list — matches
+        // the affordance every common chat app has.
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back to chat list',
+          onPressed: () => context.go('/users'),
+        ),
         title: Text(u['login'] as String),
         actions: <Widget>[
           Padding(
