@@ -90,9 +90,9 @@ func Load() (Config, error) {
 			ForcePathStyle: getEnvBool("S3_FORCE_PATH_STYLE", true),
 		},
 		Argon2: Argon2Config{
-			MemoryKiB:   uint32(getEnvInt("ARGON2_MEMORY_KIB", 65536)),
-			Time:        uint32(getEnvInt("ARGON2_TIME", 3)),
-			Parallelism: uint8(getEnvInt("ARGON2_PARALLELISM", 2)),
+			MemoryKiB:   getEnvUint32("ARGON2_MEMORY_KIB", 65536),
+			Time:        getEnvUint32("ARGON2_TIME", 3),
+			Parallelism: getEnvUint8("ARGON2_PARALLELISM", 2),
 		},
 		Push: PushConfig{
 			FCMServiceAccountJSON: os.Getenv("FCM_SERVICE_ACCOUNT_JSON"),
@@ -159,6 +159,28 @@ func getEnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+// getEnvUint32 parses an env var as an unsigned 32-bit integer, falling back
+// to def if missing, malformed, or out of range. Using ParseUint with a
+// bitSize lets gosec see the conversion is bounded and avoids the G115
+// integer-overflow warning that a naive uint32(strconv.Atoi(...)) produces.
+func getEnvUint32(key string, def uint32) uint32 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+			return uint32(n)
+		}
+	}
+	return def
+}
+
+func getEnvUint8(key string, def uint8) uint8 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 8); err == nil {
+			return uint8(n)
 		}
 	}
 	return def
