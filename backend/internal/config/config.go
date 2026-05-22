@@ -157,23 +157,33 @@ func getEnv(key, def string) string {
 }
 
 // getEnvUint32 parses an env var as an unsigned 32-bit integer, falling back
-// to def if missing, malformed, or out of range. The explicit
-// n <= math.MaxUint32 check is redundant given ParseUint's bitSize=32 but
-// satisfies gosec's G115 (integer overflow) check.
+// to def if missing, malformed, or out of range. Splitting the bounds check
+// into a standalone guard (rather than &&-ing it into the parse condition)
+// is what gosec's G115 pattern-matcher recognizes as "already bounded."
 func getEnvUint32(key string, def uint32) uint32 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 32); err == nil && n <= math.MaxUint32 {
-			return uint32(n)
+		n, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return def
 		}
+		if n > math.MaxUint32 {
+			return def
+		}
+		return uint32(n)
 	}
 	return def
 }
 
 func getEnvUint8(key string, def uint8) uint8 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 8); err == nil && n <= math.MaxUint8 {
-			return uint8(n)
+		n, err := strconv.ParseUint(v, 10, 8)
+		if err != nil {
+			return def
 		}
+		if n > math.MaxUint8 {
+			return def
+		}
+		return uint8(n)
 	}
 	return def
 }
