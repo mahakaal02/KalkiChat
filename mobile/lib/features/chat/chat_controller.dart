@@ -100,7 +100,7 @@ class ChatController extends StateNotifier<ChatState> {
     final Uint8List recipDev = _toDevBytes(recipient);
 
     final ({Envelope envelope, List<int> signature}) sealed = await Envelope.seal(
-      identity: keys,
+      sign: keys.sign,
       senderDevId: senderDev,
       recipientDevId: recipDev,
       ratchetPub: keys.xPubBytes,

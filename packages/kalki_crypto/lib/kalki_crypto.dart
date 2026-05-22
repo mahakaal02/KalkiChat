@@ -7,7 +7,9 @@
 /// package and should not be imported across the boundary.
 library kalki_crypto;
 
-export 'src/envelope.dart' show Envelope;
+export 'src/envelope.dart' show Envelope, BootstrapHeader;
 export 'src/keys.dart' show IdentityKeys;
 export 'src/ratchet.dart' show DoubleRatchet;
 export 'src/storage.dart' show KeyStorage;
+export 'src/x3dh.dart'
+    show x3dhInitiate, x3dhResponder, verifySignedPrekey, X3DHInitiateResult;
