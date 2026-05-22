@@ -28,10 +28,11 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	DeviceID     string `json:"device_id"`
-	ExpiresIn    int    `json:"expires_in"`
+	AccessToken        string `json:"access_token"`
+	RefreshToken       string `json:"refresh_token"`
+	DeviceID           string `json:"device_id"`
+	ExpiresIn          int    `json:"expires_in"`
+	MustChangePassword bool   `json:"must_change_password"`
 }
 
 func authLogin(d Deps, signer *kcrypto.JWTSigner) http.HandlerFunc {
@@ -55,13 +56,15 @@ func authLogin(d Deps, signer *kcrypto.JWTSigner) http.HandlerFunc {
 
 		// Lookup user.
 		var (
-			userID    string
-			pwHash    string
-			status    string
+			userID     string
+			pwHash     string
+			status     string
+			mustChange bool
 		)
 		err := d.DB.QueryRow(ctx, `
-			SELECT id, password_hash, status FROM users WHERE LOWER(login) = LOWER($1)
-		`, in.UserID).Scan(&userID, &pwHash, &status)
+			SELECT id, password_hash, status, must_change_password
+			  FROM users WHERE LOWER(login) = LOWER($1)
+		`, in.UserID).Scan(&userID, &pwHash, &status, &mustChange)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Constant-time-ish: do a dummy Argon2id anyway to mask timing.
 			_, _ = auth.Verify(in.Password, "$argon2id$v=19$m=65536,t=3,p=2$"+
@@ -139,10 +142,11 @@ func authLogin(d Deps, signer *kcrypto.JWTSigner) http.HandlerFunc {
 		_, _ = d.DB.Exec(ctx, `UPDATE users SET last_login_at = NOW() WHERE id = $1`, userID)
 
 		writeJSON(w, http.StatusOK, loginResponse{
-			AccessToken:  access,
-			RefreshToken: refresh,
-			DeviceID:     deviceID,
-			ExpiresIn:    int(d.Cfg.JWTAccessTTL.Seconds()),
+			AccessToken:        access,
+			RefreshToken:       refresh,
+			DeviceID:           deviceID,
+			ExpiresIn:          int(d.Cfg.JWTAccessTTL.Seconds()),
+			MustChangePassword: mustChange,
 		})
 	}
 }

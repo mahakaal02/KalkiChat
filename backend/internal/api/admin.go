@@ -152,7 +152,7 @@ func adminListUsers(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		rows, err := d.DB.Query(r.Context(), `
-			SELECT id, login, status, created_at, last_login_at
+			SELECT id, login, status, created_at, last_login_at, must_change_password
 			FROM users
 			WHERE ($1 = '' OR LOWER(login) LIKE LOWER('%' || $1 || '%'))
 			ORDER BY created_at DESC
@@ -167,15 +167,17 @@ func adminListUsers(d Deps) http.HandlerFunc {
 		for rows.Next() {
 			var id, login, status string
 			var created, lastLogin *time.Time
-			if err := rows.Scan(&id, &login, &status, &created, &lastLogin); err != nil {
+			var mustChange bool
+			if err := rows.Scan(&id, &login, &status, &created, &lastLogin, &mustChange); err != nil {
 				continue
 			}
 			out = append(out, map[string]any{
-				"id":           id,
-				"login":        login,
-				"status":       status,
-				"created_at":   created,
-				"last_login":   lastLogin,
+				"id":                   id,
+				"login":                login,
+				"status":               status,
+				"created_at":           created,
+				"last_login":           lastLogin,
+				"must_change_password": mustChange,
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"users": out})
@@ -186,8 +188,10 @@ func adminGetUser(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		var login, status string
-		err := d.DB.QueryRow(r.Context(), `SELECT login, status FROM users WHERE id=$1`, id).
-			Scan(&login, &status)
+		var mustChange bool
+		err := d.DB.QueryRow(r.Context(), `
+			SELECT login, status, must_change_password FROM users WHERE id=$1
+		`, id).Scan(&login, &status, &mustChange)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "USER_UNKNOWN", "")
 			return
@@ -218,10 +222,11 @@ func adminGetUser(d Deps) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":     id,
-			"login":  login,
-			"status": status,
-			"devices": devs,
+			"id":                   id,
+			"login":                login,
+			"status":               status,
+			"must_change_password": mustChange,
+			"devices":              devs,
 		})
 	}
 }
