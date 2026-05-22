@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
+import '../chat/admin_chat_controller.dart';
 
 final usersProvider = FutureProvider.family<List<Map<String, dynamic>>, String>(
     (ref, q) async {
@@ -22,6 +23,16 @@ class UsersScreen extends ConsumerStatefulWidget {
 
 class _State extends ConsumerState<UsersScreen> {
   String _q = '';
+
+  @override
+  void initState() {
+    super.initState();
+    // Bring up the WS + DB + prekey-upload pipeline now that we know the
+    // user is signed in. Idempotent — safe to call across navigations.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(adminChatControllerProvider.notifier).start();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

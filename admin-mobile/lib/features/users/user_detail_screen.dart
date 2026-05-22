@@ -2,7 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api.dart';
+import '../../data/local_db.dart';
+import '../chat/admin_chat_controller.dart';
 
+/// Per-user conversation screen for the admin companion device.
+///
+/// What you see here is plaintext that THIS device decrypted from
+/// envelopes coming over /v1/ws (handled by [AdminChatController]).
+/// We do NOT fetch ciphertext over HTTP and try to decode it after
+/// the fact — that path doesn't have the ratchet state.
+///
+/// The list is sourced from the local SQLCipher DB (the `messages`
+/// table, filtered by user_id). It auto-refreshes whenever the chat
+/// controller signals a new message arrived (via `lastMessageAt`).
 class UserDetailScreen extends ConsumerStatefulWidget {
   const UserDetailScreen({super.key, required this.userId});
   final String userId;
@@ -12,10 +24,11 @@ class UserDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _State extends ConsumerState<UserDetailScreen> {
-  Map<String, dynamic>? _u;
-  List<dynamic> _msgs = <dynamic>[];
+  Map<String, dynamic>? _user;
+  List<Map<String, Object?>> _msgs = <Map<String, Object?>>[];
   final TextEditingController _reply = TextEditingController();
   bool _busy = false;
+  String? _err;
 
   @override
   void initState() {
@@ -25,34 +38,54 @@ class _State extends ConsumerState<UserDetailScreen> {
 
   Future<void> _load() async {
     final api = ref.read(adminApiProvider);
+    final AdminLocalDb db = await AdminLocalDb.open();
     final results = await Future.wait<dynamic>(<Future<dynamic>>[
       api.get('/v1/admin/users/${widget.userId}'),
-      api.get('/v1/admin/users/${widget.userId}/conversation'),
+      db.messagesForUser(widget.userId),
     ]);
     if (!mounted) return;
     setState(() {
-      _u = (results[0].data as Map).cast<String, dynamic>();
-      _msgs = ((results[1].data as Map?)?['messages'] as List<dynamic>?) ?? <dynamic>[];
+      _user = (results[0].data as Map).cast<String, dynamic>();
+      _msgs = results[1] as List<Map<String, Object?>>;
     });
   }
 
   Future<void> _send() async {
     final String text = _reply.text.trim();
     if (text.isEmpty) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _err = null;
+    });
     try {
-      // Real impl: seal with admin's per-device key. Placeholder shown.
-      await ref.read(adminApiProvider).post(
-            '/v1/admin/users/${widget.userId}/messages',
-            <String, dynamic>{
-              'client_id': DateTime.now().millisecondsSinceEpoch.toString(),
-              'recipient_device_id': 'pick-from-prekeys',
-              'envelope': '',
-              'signature': '',
-            },
-          );
-      _reply.clear();
-      await _load();
+      // Find a peer device id from the most-recent inbound message —
+      // that's the user device we're already in session with. If we've
+      // never received from this user, admin-mobile can't initiate
+      // (that's a v2 feature); surface a friendly note.
+      final Map<String, Object?> lastIn = _msgs.lastWhere(
+        (Map<String, Object?> m) => m['direction'] == 'in',
+        orElse: () => <String, Object?>{},
+      );
+      if (lastIn.isEmpty) {
+        setState(() => _err =
+            'No active session with this user yet — wait for them to message first.');
+        return;
+      }
+      final String peer = lastIn['peer_device_id']! as String;
+      final bool ok =
+          await ref.read(adminChatControllerProvider.notifier).sendReply(
+                peerDeviceId: peer,
+                userId: widget.userId,
+                text: text,
+              );
+      if (ok) {
+        _reply.clear();
+        await _load();
+      } else {
+        final String? lastError =
+            ref.read(adminChatControllerProvider).lastError;
+        setState(() => _err = lastError ?? 'send failed');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -60,34 +93,104 @@ class _State extends ConsumerState<UserDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_u == null) {
+    // Listen to chat controller state — when a new message arrives,
+    // re-load the local DB to pick up the row.
+    ref.listen<AdminChatState>(adminChatControllerProvider, (prev, next) {
+      if (prev?.lastMessageAt != next.lastMessageAt) {
+        _load();
+      }
+    });
+
+    if (_user == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final Map<String, dynamic> u = _u!;
+    final Map<String, dynamic> u = _user!;
+    final AdminChatState chat = ref.watch(adminChatControllerProvider);
+
     return Scaffold(
-      appBar: AppBar(title: Text(u['login'] as String)),
-      body: Column(
-        children: <Widget>[
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              reverse: true,
-              itemCount: _msgs.length,
-              itemBuilder: (BuildContext c, int i) {
-                final Map<String, dynamic> m = (_msgs[_msgs.length - 1 - i] as Map).cast<String, dynamic>();
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Text(
-                      '[ciphertext ${(m['envelope'] as String).length}b · '
-                      'from ${(m['sender_device_id'] as String).substring(0, 8)}…]',
-                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                    ),
-                  ),
-                );
-              },
+      appBar: AppBar(
+        title: Text(u['login'] as String),
+        actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(
+              chat.connected ? Icons.cloud_done : Icons.cloud_off,
+              size: 18,
+              color: chat.connected ? Colors.greenAccent : Colors.redAccent,
             ),
           ),
+        ],
+      ),
+      body: Column(
+        children: <Widget>[
+          if (chat.lastError != null)
+            Container(
+              width: double.infinity,
+              color: const Color(0x33FFAA00),
+              padding: const EdgeInsets.all(8),
+              child: Text(chat.lastError!,
+                  style: const TextStyle(fontSize: 12, color: Colors.amberAccent)),
+            ),
+          Expanded(
+            child: _msgs.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No messages yet.\n'
+                      'When this user sends a support message,\n'
+                      'it will appear here decrypted on this device.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _msgs.length,
+                    itemBuilder: (BuildContext c, int i) {
+                      final Map<String, Object?> m = _msgs[i];
+                      final bool outgoing = m['direction'] == 'out';
+                      final String text =
+                          (m['plaintext'] as String?) ?? '(decryption pending)';
+                      final DateTime at = DateTime.fromMillisecondsSinceEpoch(
+                          m['created_at']! as int);
+                      return Align(
+                        alignment: outgoing
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          constraints: const BoxConstraints(maxWidth: 300),
+                          decoration: BoxDecoration(
+                            color: outgoing
+                                ? const Color(0xFF1F4D44)
+                                : const Color(0xFF202733),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(text,
+                                  style: const TextStyle(fontSize: 14)),
+                              const SizedBox(height: 2),
+                              Text(
+                                _timeFmt(at),
+                                style: const TextStyle(
+                                    fontSize: 10, color: Colors.white54),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          if (_err != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(_err!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ),
           SafeArea(
             top: false,
             child: Padding(
@@ -113,4 +216,9 @@ class _State extends ConsumerState<UserDetailScreen> {
       ),
     );
   }
+}
+
+String _timeFmt(DateTime t) {
+  String two(int v) => v < 10 ? '0$v' : '$v';
+  return '${two(t.hour)}:${two(t.minute)}';
 }
