@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/api.dart';
+import 'auth_state.dart';
 
+/// Email + password collection screen. Doesn't talk to the backend
+/// itself any more — credentials are stashed in [pendingAdminAuthProvider]
+/// and the TOTP screen does the actual /v1/admin/devices/register call
+/// once the TOTP code is in hand.
 class AdminLoginScreen extends ConsumerStatefulWidget {
   const AdminLoginScreen({super.key});
 
@@ -29,11 +33,26 @@ class _State extends ConsumerState<AdminLoginScreen> {
               const SizedBox(height: 32),
               const Text('KalkiChat Admin',
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              const Text(
+                'Companion-device sign-in',
+                style: TextStyle(color: Colors.white54),
+              ),
               const SizedBox(height: 24),
-              TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
+              TextField(
+                controller: _email,
+                decoration: const InputDecoration(labelText: 'Email'),
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
               const SizedBox(height: 12),
-              TextField(controller: _pw, obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password')),
+              TextField(
+                controller: _pw,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Password'),
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
               if (_err != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(_err!, style: const TextStyle(color: Colors.redAccent)),
@@ -51,23 +70,27 @@ class _State extends ConsumerState<AdminLoginScreen> {
   }
 
   Future<void> _go() async {
-    setState(() { _busy = true; _err = null; });
-    try {
-      final api = ref.read(adminApiProvider);
-      final r = await api.post('/v1/admin/auth/login', <String, String>{
-        'email': _email.text.trim(),
-        'password': _pw.text,
+    setState(() {
+      _busy = true;
+      _err = null;
+    });
+    final String email = _email.text.trim();
+    final String password = _pw.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        _err = 'Email and password are required.';
+        _busy = false;
       });
-      if (r.statusCode != 200) {
-        setState(() => _err = 'Sign-in failed (${r.statusCode})');
-        return;
-      }
-      if (!mounted) return;
-      context.go('/totp');
-    } catch (e) {
-      setState(() => _err = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      return;
     }
+    // No server round-trip here — we collect creds and let the TOTP
+    // screen do the single-shot /v1/admin/devices/register. This lets
+    // us return informative errors (BAD_CREDENTIALS, BAD_TOTP, etc.)
+    // from one endpoint instead of two.
+    ref.read(pendingAdminAuthProvider.notifier).state =
+        PendingAdminAuth(email: email, password: password);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    context.go('/totp');
   }
 }
