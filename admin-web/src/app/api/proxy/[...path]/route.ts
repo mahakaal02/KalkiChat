@@ -13,8 +13,11 @@ import { cookies } from 'next/headers';
 const INTERNAL = process.env.API_INTERNAL_BASE ?? 'http://localhost:8080';
 
 async function relay(req: NextRequest, params: { path: string[] }) {
-  const path = '/' + params.path.join('/');
-  const url = new URL(req.nextUrl.pathname.replace('/api/proxy', ''), INTERNAL);
+  // Map /api/proxy/<rest> -> <INTERNAL>/v1/<rest>. The backend mounts every
+  // route under /v1 (see backend/internal/api/router.go), and the browser-side
+  // code stays version-agnostic by calling /api/proxy/... directly.
+  const upstreamPath = '/v1/' + params.path.join('/');
+  const url = new URL(upstreamPath, INTERNAL);
   url.search = req.nextUrl.search;
 
   const fwdHeaders = new Headers();
@@ -43,14 +46,21 @@ async function relay(req: NextRequest, params: { path: string[] }) {
 
   const respHeaders = new Headers();
   for (const [k, v] of upstream.headers.entries()) {
-    if (/^transfer-encoding$|^connection$|^content-encoding$/i.test(k)) continue;
+    if (/^transfer-encoding$|^connection$|^content-encoding$|^set-cookie$/i.test(k)) continue;
     respHeaders.append(k, v);
+  }
+  // The backend scopes its Set-Cookie Path to /v1/admin/... but the browser
+  // talks to /api/proxy/admin/... — without rewriting the Path the browser
+  // would store a cookie it never sends back to us. Use getSetCookie() so
+  // multiple Set-Cookie headers don't get comma-joined.
+  for (const sc of upstream.headers.getSetCookie()) {
+    const rewritten = sc.replace(/(\bPath=)\/v1\//i, '$1/api/proxy/');
+    respHeaders.append('Set-Cookie', rewritten);
   }
   return new NextResponse(upstream.body, {
     status: upstream.status,
     headers: respHeaders,
   });
-  void path; // suppress unused warning
 }
 
 export async function GET(req: NextRequest, ctx: { params: { path: string[] } })    { return relay(req, ctx.params); }

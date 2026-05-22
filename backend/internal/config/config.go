@@ -90,9 +90,9 @@ func Load() (Config, error) {
 			ForcePathStyle: getEnvBool("S3_FORCE_PATH_STYLE", true),
 		},
 		Argon2: Argon2Config{
-			MemoryKiB:   uint32(getEnvInt("ARGON2_MEMORY_KIB", 65536)),
-			Time:        uint32(getEnvInt("ARGON2_TIME", 3)),
-			Parallelism: uint8(getEnvInt("ARGON2_PARALLELISM", 2)),
+			MemoryKiB:   getEnvUint32("ARGON2_MEMORY_KIB", 65536),
+			Time:        getEnvUint32("ARGON2_TIME", 3),
+			Parallelism: getEnvUint8("ARGON2_PARALLELISM", 2),
 		},
 		Push: PushConfig{
 			FCMServiceAccountJSON: os.Getenv("FCM_SERVICE_ACCOUNT_JSON"),
@@ -155,10 +155,25 @@ func getEnv(key, def string) string {
 	return def
 }
 
-func getEnvInt(key string, def int) int {
+// getEnvUint32 parses an env var as an unsigned 32-bit integer, falling back
+// to def if missing or malformed. The bitSize=32 argument to ParseUint
+// guarantees n fits in uint32 (otherwise ParseUint returns an ErrRange
+// error and we fall back to def), so the uint32(n) conversion cannot
+// overflow. gosec G115's pattern-matcher doesn't recognize ParseUint's
+// bitSize as a bound, so we suppress the warning explicitly.
+func getEnvUint32(key string, def uint32) uint32 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+			return uint32(n) // #nosec G115 -- bitSize=32 bounds n
+		}
+	}
+	return def
+}
+
+func getEnvUint8(key string, def uint8) uint8 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 8); err == nil {
+			return uint8(n) // #nosec G115 -- bitSize=8 bounds n
 		}
 	}
 	return def
