@@ -93,6 +93,15 @@ func NewRouter(d Deps) http.Handler {
 		r.Route("/admin", func(r chi.Router) {
 			r.Post("/auth/login", adminLogin(d))
 			r.Post("/auth/totp", adminTOTP(d, signer))
+			// Single-shot device registration for the admin companion-
+			// device mobile app. Authenticates with email+password+TOTP
+			// in the request body and returns a Bearer JWT scoped to a
+			// freshly-registered device. Unlike the cookie-based admin
+			// web login, this endpoint creates a row in `devices` with
+			// owner_kind='admin' so the device is addressable from the
+			// user mobile app's prekey/X3DH path and the WS hub's
+			// `device:<id>` channel.
+			r.Post("/devices/register", adminDeviceRegister(d, signer, rec))
 			r.Group(func(r chi.Router) {
 				r.Use(adminAuthMiddleware(signer))
 				r.Get("/users", adminListUsers(d))
