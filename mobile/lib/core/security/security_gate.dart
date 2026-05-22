@@ -2,8 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_jailbreak_detection/flutter_jailbreak_detection.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
+import 'package:safe_device/safe_device.dart';
 import 'package:screen_protector/screen_protector.dart';
 
 /// Single source of truth for runtime security policy:
@@ -27,13 +26,15 @@ class SecurityGate {
     _initialised = true;
 
     if (Platform.isAndroid) {
-      // Block screenshots / screen recording / recents preview.
-      await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
+      // Sets FLAG_SECURE on the host activity: blocks screenshots, screen
+      // recording, and removes the app from the recents preview.
+      await ScreenProtector.protectDataLeakageOn();
+      await ScreenProtector.preventScreenshotOn();
     }
     if (Platform.isIOS) {
-      // Show a blank screen when backgrounded (prevents recents-preview leak).
+      // Show a blur view when backgrounded (prevents recents-preview leak)
+      // and prevent capture / detect screen recording.
       await ScreenProtector.protectDataLeakageWithBlur();
-      // Notify app if screen recording is started, so we can blank chat.
       await ScreenProtector.preventScreenshotOn();
     }
 
@@ -45,9 +46,10 @@ class SecurityGate {
     if (kDebugMode) return; // Debug builds run on emulators / test devices.
 
     try {
-      final bool isJB = await FlutterJailbreakDetection.jailbroken;
-      final bool isDev = await FlutterJailbreakDetection.developerMode;
-      _compromised = isJB || (Platform.isAndroid && isDev);
+      final bool isJB = await SafeDevice.isJailBroken;
+      final bool isDev =
+          Platform.isAndroid ? await SafeDevice.isDevelopmentModeEnable : false;
+      _compromised = isJB || isDev;
     } on PlatformException {
       // If the detection plugin itself fails, be safe and lock down.
       _compromised = true;

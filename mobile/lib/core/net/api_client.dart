@@ -27,20 +27,33 @@ class ApiClient {
         )) {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (RequestOptions opts, RequestInterceptorHandler h) async {
-        // SSL pin check first (cheap, fail-fast).
-        try {
-          await HttpCertificatePinning.check(
-            serverURL: opts.uri.toString(),
-            sha: SHA.SHA256,
-            allowedSHAFingerprints: spkiPins,
-            timeout: 10,
-          );
-        } catch (e) {
+        // Dev shortcut: plain HTTP has no TLS cert to pin. Guarded by an
+        // explicit --dart-define=DEV_ALLOW_HTTP=true; defaults to off.
+        const bool devAllowHttp = bool.fromEnvironment('DEV_ALLOW_HTTP');
+        final bool isHttp = opts.uri.scheme == 'http';
+        if (isHttp && !devAllowHttp) {
           return h.reject(DioException(
             requestOptions: opts,
             type: DioExceptionType.badCertificate,
-            message: 'SSL pin failure: $e',
+            message: 'plain HTTP refused; pass --dart-define=DEV_ALLOW_HTTP=true for dev',
           ));
+        }
+        if (!isHttp) {
+          // SSL pin check first (cheap, fail-fast).
+          try {
+            await HttpCertificatePinning.check(
+              serverURL: opts.uri.toString(),
+              sha: SHA.SHA256,
+              allowedSHAFingerprints: spkiPins,
+              timeout: 10,
+            );
+          } catch (e) {
+            return h.reject(DioException(
+              requestOptions: opts,
+              type: DioExceptionType.badCertificate,
+              message: 'SSL pin failure: $e',
+            ));
+          }
         }
         final String? token = await HardwareKeystore.I.readString('access_token');
         if (token != null && !opts.headers.containsKey('Authorization')) {
