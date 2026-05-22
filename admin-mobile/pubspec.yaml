@@ -24,8 +24,10 @@ dependencies:
   kalki_crypto:
     path: ../packages/kalki_crypto
   sqflite_sqlcipher: ^3.1.0+1
-  flutter_jailbreak_detection: ^1.10.0
-  flutter_windowmanager: ^0.2.0
+  # Replaces flutter_jailbreak_detection (unmaintained, broke on AGP 9) and
+  # flutter_windowmanager (same). Mirrors mobile/pubspec.yaml — see PR #2.
+  safe_device: ^1.2.0              # root / jailbreak / dev-mode detection
+  screen_protector: ^1.4.2         # FLAG_SECURE on Android, blur on iOS
   web_socket_channel: ^3.0.1
   uuid: ^4.5.1
   intl: ^0.19.0
