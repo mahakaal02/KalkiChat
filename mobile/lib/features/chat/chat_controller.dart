@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../core/crypto/envelope.dart';
-import '../../core/crypto/keys.dart';
+import 'package:kalki_crypto/kalki_crypto.dart';
+
 import '../../core/net/ws_client.dart';
 import '../../core/security/keystore.dart';
 import '../../data/local_db.dart';
@@ -75,7 +75,7 @@ class ChatController extends StateNotifier<ChatState> {
   }
 
   Future<void> sendText(String text) async {
-    final IdentityKeys keys = await IdentityKeys.initOrLoad();
+    final IdentityKeys keys = await IdentityKeys.initOrLoad(HardwareKeystore.I);
     final String? deviceId = await HardwareKeystore.I.readString('device_id');
     final String? recipient =
         await HardwareKeystore.I.readString('admin_device_id');

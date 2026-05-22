@@ -17,6 +17,12 @@ dependencies:
   cryptography: ^2.7.0
   cryptography_flutter: ^2.3.2
   flutter_secure_storage: ^9.2.2
+
+  # Shared KalkiChat E2E primitives — same implementation the user mobile app
+  # uses. Phase 2 of the admin-companion-device rollout will start consuming
+  # IdentityKeys / Envelope / DoubleRatchet from here.
+  kalki_crypto:
+    path: ../packages/kalki_crypto
   sqflite_sqlcipher: ^3.1.0+1
   flutter_jailbreak_detection: ^1.10.0
   flutter_windowmanager: ^0.2.0

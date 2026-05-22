@@ -23,6 +23,11 @@ dependencies:
   cryptography_flutter: ^2.3.2   # Hardware-accelerated AES-GCM on Android/iOS
   pointycastle: ^3.9.1           # SHA-512, padding utilities
 
+  # KalkiChat-shared E2E primitives. Same implementation is consumed by the
+  # admin companion-device app so the protocol stays in one place.
+  kalki_crypto:
+    path: ../packages/kalki_crypto
+
   # Secure storage / DB
   flutter_secure_storage: ^9.2.2
   sqflite_sqlcipher: ^3.1.0+1

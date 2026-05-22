@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:kalki_chat/core/crypto/envelope.dart';
+import 'package:kalki_crypto/kalki_crypto.dart';
 
 void main() {
   test('envelope round-trips through binary form', () async {

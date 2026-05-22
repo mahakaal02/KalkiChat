@@ -2,7 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/crypto/keys.dart';
+import 'package:kalki_crypto/kalki_crypto.dart';
+
 import '../../core/net/api_client.dart';
 import '../../core/security/keystore.dart';
 import '../../env.dart';
@@ -34,7 +35,7 @@ class LoginController extends StateNotifier<AsyncValue<void>> {
   }) async {
     state = const AsyncLoading<void>();
     try {
-      final IdentityKeys keys = await IdentityKeys.initOrLoad();
+      final IdentityKeys keys = await IdentityKeys.initOrLoad(HardwareKeystore.I);
 
       final Map<String, dynamic> body = <String, dynamic>{
         'user_id': userId,

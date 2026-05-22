@@ -5,7 +5,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
-import '../core/crypto/ratchet.dart';
+import 'package:kalki_crypto/kalki_crypto.dart';
+
 import '../core/security/keystore.dart';
 
 /// Encrypted SQLite (sqlcipher) — backs:
