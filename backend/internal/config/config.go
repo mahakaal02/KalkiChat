@@ -9,6 +9,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -155,22 +156,13 @@ func getEnv(key, def string) string {
 	return def
 }
 
-func getEnvInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
 // getEnvUint32 parses an env var as an unsigned 32-bit integer, falling back
-// to def if missing, malformed, or out of range. Using ParseUint with a
-// bitSize lets gosec see the conversion is bounded and avoids the G115
-// integer-overflow warning that a naive uint32(strconv.Atoi(...)) produces.
+// to def if missing, malformed, or out of range. The explicit
+// n <= math.MaxUint32 check is redundant given ParseUint's bitSize=32 but
+// satisfies gosec's G115 (integer overflow) check.
 func getEnvUint32(key string, def uint32) uint32 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil && n <= math.MaxUint32 {
 			return uint32(n)
 		}
 	}
@@ -179,7 +171,7 @@ func getEnvUint32(key string, def uint32) uint32 {
 
 func getEnvUint8(key string, def uint8) uint8 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 8); err == nil {
+		if n, err := strconv.ParseUint(v, 10, 8); err == nil && n <= math.MaxUint8 {
 			return uint8(n)
 		}
 	}
