@@ -103,6 +103,7 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/users/{id}/revoke-sessions", adminRevokeSessions(d, rec))
 				r.Get("/users/{id}/conversation", adminGetConversation(d))
 				r.Post("/users/{id}/messages", adminSendMessage(d, msgSvc, rec))
+				r.Get("/conversations", adminListConversations(d))
 				r.Get("/devices", adminListDevices(d))
 				r.Post("/devices/{id}/revoke", adminRevokeDevice(d, rec))
 				r.Get("/config/whatsapp", adminGetWhatsApp(d))

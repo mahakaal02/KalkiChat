@@ -13,6 +13,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
         <nav className="flex-1 p-3 space-y-1 text-sm">
           <NavLink href="/">Overview</NavLink>
+          <NavLink href="/messages">Messages</NavLink>
           <NavLink href="/users">Users</NavLink>
           <NavLink href="/devices">Devices</NavLink>
           <NavLink href="/config/whatsapp">WhatsApp Config</NavLink>
