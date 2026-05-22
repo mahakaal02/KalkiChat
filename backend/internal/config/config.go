@@ -9,7 +9,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -157,33 +156,25 @@ func getEnv(key, def string) string {
 }
 
 // getEnvUint32 parses an env var as an unsigned 32-bit integer, falling back
-// to def if missing, malformed, or out of range. Splitting the bounds check
-// into a standalone guard (rather than &&-ing it into the parse condition)
-// is what gosec's G115 pattern-matcher recognizes as "already bounded."
+// to def if missing or malformed. The bitSize=32 argument to ParseUint
+// guarantees n fits in uint32 (otherwise ParseUint returns an ErrRange
+// error and we fall back to def), so the uint32(n) conversion cannot
+// overflow. gosec G115's pattern-matcher doesn't recognize ParseUint's
+// bitSize as a bound, so we suppress the warning explicitly.
 func getEnvUint32(key string, def uint32) uint32 {
 	if v := os.Getenv(key); v != "" {
-		n, err := strconv.ParseUint(v, 10, 32)
-		if err != nil {
-			return def
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+			return uint32(n) // #nosec G115 -- bitSize=32 bounds n
 		}
-		if n > math.MaxUint32 {
-			return def
-		}
-		return uint32(n)
 	}
 	return def
 }
 
 func getEnvUint8(key string, def uint8) uint8 {
 	if v := os.Getenv(key); v != "" {
-		n, err := strconv.ParseUint(v, 10, 8)
-		if err != nil {
-			return def
+		if n, err := strconv.ParseUint(v, 10, 8); err == nil {
+			return uint8(n) // #nosec G115 -- bitSize=8 bounds n
 		}
-		if n > math.MaxUint8 {
-			return def
-		}
-		return uint8(n)
 	}
 	return def
 }
