@@ -8,7 +8,6 @@ global:
   # value is the fallback for any service that doesn't have one yet.
   imageTag: latest
   imagePullPolicy: IfNotPresent
-
 # Anti-affinity is applied to every schat workload (see _helpers.tpl
 # `schat.nodeAffinity` → `kubernetes.io/hostname NotIn …`). Mirrors the
 # /bet chart's pattern; keep the list aligned with the parallel kalki
@@ -16,11 +15,9 @@ global:
 excludeNodes:
   - podstackl40s
   - podstack-huawei-cp-01
-
 traefik:
   entryPoint: websecure
   certResolver: letsencrypt
-
 # Cross-service shared secrets. JWT_PRIVATE_KEY_PEM signs all access
 # tokens issued by the backend (verified by the backend itself on every
 # /v1/admin/* and /v1/auth/* request). TOTP_ENC_KEY_HEX is the AES-256
@@ -37,7 +34,6 @@ sharedSecret:
   jwtPublicKeyPem: "CHANGE_ME_paste_ed25519_public_pem"
   # 32-byte hex (i.e. 64 hex chars). `openssl rand -hex 32`.
   totpEncKeyHex: "CHANGE_ME_64_hex_chars_for_totp_encryption_key_here_zzzzzzzzzzzzzz"
-
 # S3 / object-store credentials. These ride on the same shared Secret as
 # the JWT keys because the backend reads them via env at process start.
 # Defaults match the in-cluster MinIO below; flip to your managed S3 by
@@ -49,7 +45,6 @@ s3:
   accessKey: "schat-minio-access"
   secretKey: "schat-minio-secret-CHANGE_ME"
   forcePathStyle: true
-
 # ─── in-cluster Postgres ───────────────────────────────────────────────────
 # Mirrors /bet's chart pattern (StatefulSet, ReadWriteOnce PVC, initdb
 # ConfigMap). One database `schat` — single-tenant, no extra DBs.
@@ -74,7 +69,6 @@ postgres:
     limits:
       cpu: 2000m
       memory: 2Gi
-
 # ─── external Redis ────────────────────────────────────────────────────────
 # Same pattern /bet uses: assume an existing redis cluster at the
 # configured host. Password is pulled at runtime from the
@@ -86,7 +80,6 @@ redis:
   host: kalkai-redis-master.kalkai.svc.cluster.local
   port: 6379
   keyPrefix: "schat:"
-
 # ─── in-cluster MinIO ──────────────────────────────────────────────────────
 # KalkiChat-specific (not present in /bet). Provides the S3-compatible
 # object store for media (the backend's S3 client points at the
@@ -112,7 +105,6 @@ minio:
     limits:
       cpu: 1000m
       memory: 1Gi
-
 # ─── per-service ───────────────────────────────────────────────────────────
 
 # Go backend — HTTP/WS API on :8080. Migrations auto-run via
@@ -139,19 +131,17 @@ backend:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: 1000m, memory: 1Gi}
-
 # Next.js admin dashboard — :3000 inside the container. Talks to the
 # backend internally at http://schat-backend:8080 via the
 # /api/proxy/[...path] route handler (see admin-web/src/app/api/proxy).
 adminWeb:
   image: schat-admin-web
-  imageTag: latest # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
+  imageTag: 20260523T175818Z-fcf26a1 # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
   port: 3000
   replicas: 1
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
-
 # Retention sweeper — Go binary built from backend/Dockerfile.retention.
 # Background worker, no HTTP listener. Sweeps expired messages /
 # attachments per the deletion policy.
