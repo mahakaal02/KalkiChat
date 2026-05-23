@@ -136,7 +136,7 @@ backend:
 # /api/proxy/[...path] route handler (see admin-web/src/app/api/proxy).
 adminWeb:
   image: schat-admin-web
-  imageTag: 20260523T184133Z-da8f290 # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
+  imageTag: 20260523T184310Z-087605c # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
   port: 3000
   replicas: 1
   resources:
@@ -147,7 +147,7 @@ adminWeb:
 # attachments per the deletion policy.
 retention:
   image: schat-retention
-  imageTag: 20260523T184132Z-da8f290 # {"$imagepolicy": "flux-system:schat-retention:tag"}
+  imageTag: 20260523T184309Z-087605c # {"$imagepolicy": "flux-system:schat-retention:tag"}
   replicas: 1
   # How often the sweep loop runs. Backend reads RETENTION_SWEEP_INTERVAL
   # as a Go duration string ("60s", "5m", etc.).
