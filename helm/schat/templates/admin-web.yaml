@@ -1,0 +1,87 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schat-admin-web
+  labels:
+    {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.adminWeb.port }}
+      targetPort: {{ .Values.adminWeb.port }}
+      name: http
+  selector:
+    app.kubernetes.io/name: admin-web
+    app.kubernetes.io/part-of: schat
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schat-admin-web
+  labels:
+    {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.adminWeb.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-web
+      app.kubernetes.io/part-of: schat
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      containers:
+        - name: admin-web
+          image: {{ include "schat.image" (dict "image" .Values.adminWeb.image "tag" .Values.adminWeb.imageTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.adminWeb.port }}
+              name: http
+          env:
+            # The /api/proxy/[...path] route handler in admin-web reaches
+            # the backend via this in-cluster URL. Backend's auth +
+            # /v1/admin/* routes accept cookies forwarded by the proxy.
+            - name: API_INTERNAL_BASE
+              value: "http://schat-backend:{{ .Values.backend.port }}"
+            - name: NEXT_PUBLIC_API_BASE
+              value: "https://{{ include "schat.host" (dict "svc" "backend" "ctx" .) }}"
+            # Next.js production mode picks up NODE_ENV automatically;
+            # explicit for clarity.
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: {{ .Values.adminWeb.port | quote }}
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: {{ .Values.adminWeb.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: {{ .Values.adminWeb.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.adminWeb.resources | nindent 12 }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: schat-admin-web
+  labels:
+    {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 4 }}
+spec:
+  entryPoints:
+    - {{ .Values.traefik.entryPoint }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ include "schat.host" (dict "svc" "admin-web" "ctx" .) }}`)
+      services:
+        - name: schat-admin-web
+          port: {{ .Values.adminWeb.port }}
+  tls:
+    certResolver: {{ .Values.traefik.certResolver }}

@@ -1,0 +1,112 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schat-backend
+  labels:
+    {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.backend.port }}
+      targetPort: {{ .Values.backend.port }}
+      name: http
+  selector:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: schat
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schat-backend
+  labels:
+    {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  # `Recreate` not `RollingUpdate`. There's no in-pod PVC today
+  # (media goes to MinIO), but Redis pub/sub subscribers leak briefly
+  # during overlap and HelmRelease's `wait: true` already times out
+  # before a rolling cutover would settle. Once we ship leader
+  # election + horizontal scaling, this flips back to RollingUpdate.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+      app.kubernetes.io/part-of: schat
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      # The Go backend image runs as a non-root user (see
+      # backend/Dockerfile). 1001 matches the UID baked into the image.
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: backend
+          image: {{ include "schat.image" (dict "image" .Values.backend.image "tag" .Values.backend.imageTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.port }}
+              name: http
+          env:
+            - name: PORT
+              value: {{ .Values.backend.port | quote }}
+            # No init-container migration step (unlike /bet's
+            # prisma-migrate). The backend itself runs
+            # `db.Migrate(...)` on startup — see
+            # backend/cmd/server/main.go. golang-migrate is idempotent;
+            # racing pods at boot would each see the same applied
+            # version and no-op.
+            - name: DATABASE_URL
+              value: {{ include "schat.databaseUrl" (dict "override" .Values.backend.databaseUrl "ctx" .) | quote }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.backend.allowedOrigins | quote }}
+            - name: JWT_ACCESS_TTL
+              value: {{ .Values.backend.jwtAccessTtl | quote }}
+            - name: JWT_REFRESH_TTL
+              value: {{ .Values.backend.jwtRefreshTtl | quote }}
+            {{- include "schat.redisEnv" . | nindent 12 }}
+            {{- include "schat.s3Env" . | nindent 12 }}
+            {{- range $k, $v := .Values.backend.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: schat-shared
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: schat-backend
+  labels:
+    {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 4 }}
+spec:
+  entryPoints:
+    - {{ .Values.traefik.entryPoint }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ include "schat.host" (dict "svc" "backend" "ctx" .) }}`)
+      services:
+        - name: schat-backend
+          port: {{ .Values.backend.port }}
+  tls:
+    certResolver: {{ .Values.traefik.certResolver }}

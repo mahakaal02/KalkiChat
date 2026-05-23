@@ -1,0 +1,169 @@
+# ─── global ────────────────────────────────────────────────────────────────
+global:
+  domain: cloud.podstack.ai
+  hostnamePrefix: schat- # → schat-backend.cloud.podstack.ai, etc.
+  imageRegistry: docker.io/mahakaal02
+  # Per-service `imageTag` (below) overrides this when set. Flux's
+  # ImageUpdateAutomation only writes to the per-service field, so this
+  # value is the fallback for any service that doesn't have one yet.
+  imageTag: latest
+  imagePullPolicy: IfNotPresent
+
+# Anti-affinity is applied to every schat workload (see _helpers.tpl
+# `schat.nodeAffinity` → `kubernetes.io/hostname NotIn …`). Mirrors the
+# /bet chart's pattern; keep the list aligned with the parallel kalki
+# install so neither stack lands on nodes reserved for other workloads.
+excludeNodes:
+  - podstackl40s
+  - podstack-huawei-cp-01
+
+traefik:
+  entryPoint: websecure
+  certResolver: letsencrypt
+
+# Cross-service shared secrets. JWT_PRIVATE_KEY_PEM signs all access
+# tokens issued by the backend (verified by the backend itself on every
+# /v1/admin/* and /v1/auth/* request). TOTP_ENC_KEY_HEX is the AES-256
+# key that wraps admin TOTP secrets at rest in the `admins` table.
+#
+# Override these before going live — the CHANGE_ME defaults will fail
+# fast at startup (config.Load() rejects a non-hex TOTP key) so a
+# misconfigured deployment doesn't silently boot.
+sharedSecret:
+  # PEM-encoded Ed25519 keypair. Generate locally with:
+  #   openssl genpkey -algorithm ed25519 -out /tmp/jwt.pem
+  #   openssl pkey -in /tmp/jwt.pem -pubout -out /tmp/jwt.pub.pem
+  jwtPrivateKeyPem: "CHANGE_ME_paste_ed25519_private_pem"
+  jwtPublicKeyPem: "CHANGE_ME_paste_ed25519_public_pem"
+  # 32-byte hex (i.e. 64 hex chars). `openssl rand -hex 32`.
+  totpEncKeyHex: "CHANGE_ME_64_hex_chars_for_totp_encryption_key_here_zzzzzzzzzzzzzz"
+
+# S3 / object-store credentials. These ride on the same shared Secret as
+# the JWT keys because the backend reads them via env at process start.
+# Defaults match the in-cluster MinIO below; flip to your managed S3 by
+# overriding s3.endpoint / accessKey / secretKey in your prod values.
+s3:
+  endpoint: "http://schat-minio:9000"
+  region: "us-east-1"
+  bucket: "schat-media"
+  accessKey: "schat-minio-access"
+  secretKey: "schat-minio-secret-CHANGE_ME"
+  forcePathStyle: true
+
+# ─── in-cluster Postgres ───────────────────────────────────────────────────
+# Mirrors /bet's chart pattern (StatefulSet, ReadWriteOnce PVC, initdb
+# ConfigMap). One database `schat` — single-tenant, no extra DBs.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  user: schat
+  # CHANGE_ME sentinel. Override via in-cluster `schat-helm-values` Secret
+  # so the real password never lands in git. See the /bet rotation runbook
+  # (helm/kalki/values.yaml `postgres.password` comment) — same procedure
+  # applies here once the cluster has booted with a real value.
+  password: "CHANGE_ME_postgres_default"
+  storage:
+    size: 20Gi
+    storageClassName: longhorn
+  databases:
+    - schat
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+# ─── external Redis ────────────────────────────────────────────────────────
+# Same pattern /bet uses: assume an existing redis cluster at the
+# configured host. Password is pulled at runtime from the
+# `schat-redis-creds` Secret (kept out of git — created in-cluster via
+# the bootstrap runbook in clusters/schat/_bootstrap.yaml). For a quick
+# spin-up you can use a separate Helm install of `bitnami/redis` and
+# point this host at its master service.
+redis:
+  host: schat-redis-master.schat.svc.cluster.local
+  port: 6379
+  keyPrefix: "schat:"
+
+# ─── in-cluster MinIO ──────────────────────────────────────────────────────
+# KalkiChat-specific (not present in /bet). Provides the S3-compatible
+# object store for media (the backend's S3 client points at the
+# `schat-minio` Service). Disable + repoint to managed S3 in prod by
+# setting `minio.enabled: false` and updating `s3.endpoint` /
+# accessKey / secretKey above.
+minio:
+  enabled: true
+  image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+  rootUser: "schat-minio-access"
+  # Must match s3.secretKey above. Override both together in your
+  # in-cluster `schat-helm-values` Secret.
+  rootPassword: "schat-minio-secret-CHANGE_ME"
+  storage:
+    size: 50Gi
+    storageClassName: longhorn
+  port: 9000
+  consolePort: 9001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# ─── per-service ───────────────────────────────────────────────────────────
+
+# Go backend — HTTP/WS API on :8080. Migrations auto-run via
+# golang-migrate inside cmd/server/main.go on every boot, so there is
+# no init-container equivalent of /bet's prisma-migrate step.
+backend:
+  image: schat-backend
+  # Flux ImageUpdateAutomation rewrites the value of this field in
+  # place. Do not remove the trailing comment marker — see
+  # clusters/schat/imagepolicies.yaml + imageupdateautomation.yaml.
+  imageTag: latest # {"$imagepolicy": "flux-system:schat-backend:tag"}
+  port: 8080
+  replicas: 1
+  databaseUrl: "" # if blank, built from postgres.{user,password}@schat-postgres/schat
+  # Allowed-origins for the admin-web (cookie auth requires a specific
+  # origin, not wildcard — see PR #3 for context). Pre-baked here so the
+  # in-cluster Secret overlay doesn't have to be edited just to add the
+  # admin URL. Extend by appending `,https://<your-origin>`.
+  allowedOrigins: "https://schat-admin-web.cloud.podstack.ai"
+  # TTLs for the JWT signer.
+  jwtAccessTtl: "15m"
+  jwtRefreshTtl: "168h"
+  env: {}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 1000m, memory: 1Gi}
+
+# Next.js admin dashboard — :3000 inside the container. Talks to the
+# backend internally at http://schat-backend:8080 via the
+# /api/proxy/[...path] route handler (see admin-web/src/app/api/proxy).
+adminWeb:
+  image: schat-admin-web
+  imageTag: latest # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
+  port: 3000
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+# Retention sweeper — Go binary built from backend/Dockerfile.retention.
+# Background worker, no HTTP listener. Sweeps expired messages /
+# attachments per the deletion policy.
+retention:
+  image: schat-retention
+  imageTag: latest # {"$imagepolicy": "flux-system:schat-retention:tag"}
+  replicas: 1
+  # How often the sweep loop runs. Backend reads RETENTION_SWEEP_INTERVAL
+  # as a Go duration string ("60s", "5m", etc.).
+  sweepInterval: "60s"
+  databaseUrl: "" # falls back to postgres.* if blank, same as backend
+  env: {}
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}

@@ -1,0 +1,144 @@
+{{- if .Values.minio.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: schat-minio
+  labels:
+    {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 4 }}
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: {{ .Values.minio.rootUser | quote }}
+  MINIO_ROOT_PASSWORD: {{ .Values.minio.rootPassword | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schat-minio
+  labels:
+    {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.minio.port }}
+      targetPort: {{ .Values.minio.port }}
+      name: s3
+    - port: {{ .Values.minio.consolePort }}
+      targetPort: {{ .Values.minio.consolePort }}
+      name: console
+  selector:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: schat
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: schat-minio-data
+  labels:
+    {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.minio.storage.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.minio.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schat-minio
+  labels:
+    {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 4 }}
+spec:
+  replicas: 1
+  # Single-replica + ReadWriteOnce PVC → Recreate, same reasoning as
+  # /bet's postgres / backend (Multi-Attach deadlock on rolling update).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+      app.kubernetes.io/part-of: schat
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":{{ .Values.minio.consolePort }}"
+          ports:
+            - containerPort: {{ .Values.minio.port }}
+              name: s3
+            - containerPort: {{ .Values.minio.consolePort }}
+              name: console
+          envFrom:
+            - secretRef:
+                name: schat-minio
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: {{ .Values.minio.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: {{ .Values.minio.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: schat-minio-data
+---
+# One-shot Job that creates the bucket on a fresh MinIO. Idempotent —
+# `mc mb --ignore-existing` no-ops when the bucket already exists.
+# Annotated as a Helm post-install + post-upgrade hook so it runs on
+# every release.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: schat-minio-init
+  labels:
+    {{- include "schat.labels" (dict "name" "minio-init" "ctx" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "minio-init" "ctx" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2024-12-13T03-23-26Z
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mc alias set schat http://schat-minio:{{ .Values.minio.port }} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb --ignore-existing schat/{{ .Values.s3.bucket }}
+              # Block anonymous reads — every fetch uses presigned URLs.
+              mc anonymous set none schat/{{ .Values.s3.bucket }} || true
+          envFrom:
+            - secretRef:
+                name: schat-minio
+{{- end }}
