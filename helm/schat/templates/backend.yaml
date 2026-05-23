@@ -38,17 +38,25 @@ spec:
       labels:
         {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- include "schat.nodeAffinity" . | nindent 6 }}
-      # The Go backend image runs as a non-root user (see
-      # backend/Dockerfile). 1001 matches the UID baked into the image.
+      # The Go backend image is built FROM gcr.io/distroless/static:nonroot
+      # (see backend/Dockerfile `USER 65532:65532`). Pin the pod UID/GID
+      # to match so volume + tmpfs ownership stays consistent.
       securityContext:
-        runAsUser: 1001
-        runAsGroup: 1001
-        fsGroup: 1001
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        {{- include "schat.waitForPostgres" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: backend
           image: {{ include "schat.image" (dict "image" .Values.backend.image "tag" .Values.backend.imageTag "ctx" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "schat.containerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.backend.port }}
               name: http

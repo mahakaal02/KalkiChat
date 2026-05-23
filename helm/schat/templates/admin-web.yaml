@@ -31,11 +31,20 @@ spec:
       labels:
         {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- include "schat.nodeAffinity" . | nindent 6 }}
+      # Next.js standalone build runs from gcr.io/distroless/nodejs20:nonroot
+      # (admin-web/Dockerfile `USER nonroot`, UID 65532).
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
       containers:
         - name: admin-web
           image: {{ include "schat.image" (dict "image" .Values.adminWeb.image "tag" .Values.adminWeb.imageTag "ctx" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "schat.containerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.adminWeb.port }}
               name: http

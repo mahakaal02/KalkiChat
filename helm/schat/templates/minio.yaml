@@ -63,11 +63,21 @@ spec:
       labels:
         {{- include "schat.labels" (dict "name" "minio" "ctx" .) | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- include "schat.nodeAffinity" . | nindent 6 }}
+      # minio/minio runs happily as UID 1000 (the `minio` user baked
+      # into the image). fsGroup ensures the longhorn PVC stays
+      # writable after the drop.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: minio
           image: {{ .Values.minio.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "schat.containerSecurityContext" . | nindent 12 }}
           args:
             - server
             - /data
@@ -125,10 +135,17 @@ spec:
         {{- include "schat.labels" (dict "name" "minio-init" "ctx" .) | nindent 8 }}
     spec:
       restartPolicy: OnFailure
+      automountServiceAccountToken: false
       {{- include "schat.nodeAffinity" . | nindent 6 }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: mc
-          image: minio/mc:RELEASE.2024-12-13T03-23-26Z
+          image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+          securityContext:
+            {{- include "schat.containerSecurityContext" . | nindent 12 }}
           command:
             - sh
             - -c
@@ -141,4 +158,7 @@ spec:
           envFrom:
             - secretRef:
                 name: schat-minio
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits:   {cpu: 200m, memory: 128Mi}
 {{- end }}
