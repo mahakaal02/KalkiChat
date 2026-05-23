@@ -136,7 +136,7 @@ backend:
 # /api/proxy/[...path] route handler (see admin-web/src/app/api/proxy).
 adminWeb:
   image: schat-admin-web
-  imageTag: 20260523T192527Z-6732aef # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
+  imageTag: 20260523T192728Z-e30c6f8 # {"$imagepolicy": "flux-system:schat-admin-web:tag"}
   port: 3000
   replicas: 1
   resources:
