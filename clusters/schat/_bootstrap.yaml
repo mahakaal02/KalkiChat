@@ -16,16 +16,18 @@
 #           --private-key-file=/tmp/schat-flux \
 #           --namespace=flux-system
 #
-#   3. Create the schat namespace:
-#         kubectl create namespace schat
+#   3. Shared `kalki` namespace already exists (hosts the parallel /bet
+#      stack). All schat resources are prefixed `schat-*` so they coexist
+#      without name collisions.
 #
-#   4. Create the redis credentials Secret in-cluster (NOT in git). Point
-#      the host at whichever Redis you run in this cluster (an existing
-#      bitnami/redis Helm install, an AWS ElastiCache endpoint, etc.):
-#         REDIS_PW=$(openssl rand -hex 24)
-#         kubectl -n schat create secret generic schat-redis-creds \
+#   4. Create the redis credentials Secret in-cluster (NOT in git). schat
+#      shares the kalkai-redis-master in the `kalkai` namespace with the
+#      /bet stack; keys are namespaced by `redis.keyPrefix: "schat:"`. Pull
+#      the password from the existing bitnami secret:
+#         REDIS_PW=$(kubectl -n kalkai get secret kalkai-redis -o jsonpath='{.data.redis-password}' | base64 -d)
+#         kubectl -n kalki create secret generic schat-redis-creds \
 #           --from-literal=redis-password="${REDIS_PW}" \
-#           --from-literal=redis-url="redis://:${REDIS_PW}@schat-redis-master.schat.svc.cluster.local:6379/0"
+#           --from-literal=redis-url="redis://:${REDIS_PW}@kalkai-redis-master.kalkai.svc.cluster.local:6379/0"
 #
 #   5. Create the in-cluster Helm values override Secret. Carries the real
 #      JWT keypair, TOTP encryption key, postgres password, MinIO root
@@ -49,7 +51,7 @@
 #         s3:
 #           secretKey: "${MINIO_PW}"
 #         EOF
-#         kubectl -n schat create secret generic schat-helm-values \
+#         kubectl -n kalki create secret generic schat-helm-values \
 #           --from-file=values.yaml=/tmp/schat-values.yaml
 #         shred -u /tmp/schat-values.yaml /tmp/jwt.pem /tmp/jwt.pub.pem
 #

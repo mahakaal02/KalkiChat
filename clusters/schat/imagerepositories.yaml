@@ -5,7 +5,7 @@ metadata:
   name: schat-backend
   namespace: flux-system
 spec:
-  image: docker.io/mahakaal02/schat-backend
+  image: docker.io/saurav7055/schat-backend
   interval: 2m
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
@@ -14,7 +14,7 @@ metadata:
   name: schat-admin-web
   namespace: flux-system
 spec:
-  image: docker.io/mahakaal02/schat-admin-web
+  image: docker.io/saurav7055/schat-admin-web
   interval: 2m
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2
@@ -23,5 +23,5 @@ metadata:
   name: schat-retention
   namespace: flux-system
 spec:
-  image: docker.io/mahakaal02/schat-retention
+  image: docker.io/saurav7055/schat-retention
   interval: 2m

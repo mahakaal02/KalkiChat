@@ -3,10 +3,10 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: schat
-  namespace: schat
+  namespace: kalki
 spec:
   releaseName: schat
-  targetNamespace: schat
+  targetNamespace: kalki
   interval: 5m
   chart:
     spec:

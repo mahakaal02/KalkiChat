@@ -20,7 +20,7 @@ same mental model.
 | `schat-minio` (Secret) | MinIO root credentials | `minio.enabled` |
 
 Image refs are formed as
-`docker.io/mahakaal02/<image>:<imageTag>`. Each per-service `imageTag`
+`docker.io/saurav7055/<image>:<imageTag>`. Each per-service `imageTag`
 in `values.yaml` carries a `{"$imagepolicy": ...}` marker so Flux's
 `ImageUpdateAutomation` can rewrite the value in place when a new image
 appears on Docker Hub.

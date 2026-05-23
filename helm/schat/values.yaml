@@ -2,7 +2,7 @@
 global:
   domain: cloud.podstack.ai
   hostnamePrefix: schat- # → schat-backend.cloud.podstack.ai, etc.
-  imageRegistry: docker.io/mahakaal02
+  imageRegistry: docker.io/saurav7055
   # Per-service `imageTag` (below) overrides this when set. Flux's
   # ImageUpdateAutomation only writes to the per-service field, so this
   # value is the fallback for any service that doesn't have one yet.
@@ -83,7 +83,7 @@ postgres:
 # spin-up you can use a separate Helm install of `bitnami/redis` and
 # point this host at its master service.
 redis:
-  host: schat-redis-master.schat.svc.cluster.local
+  host: kalkai-redis-master.kalkai.svc.cluster.local
   port: 6379
   keyPrefix: "schat:"
 
