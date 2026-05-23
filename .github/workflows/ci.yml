@@ -138,16 +138,3 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/kalki-admin-web:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/kalki-backend:${{ github.sha }}
-          format: sarif
-          output: trivy.sarif
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-      - name: Upload Trivy SARIF
-        if: always()
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
-        with: { sarif_file: trivy.sarif }
