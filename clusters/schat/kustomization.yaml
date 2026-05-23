@@ -1,0 +1,10 @@
+# What Flux applies for the schat namespace. The flux-system Kustomization
+# (`flux-system/schat`, bootstrapped once via clusters/schat/_bootstrap.yaml)
+# reconciles this path on every git change.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - helmrelease.yaml
+  - imagerepositories.yaml
+  - imagepolicies.yaml
+  - imageupdateautomation.yaml

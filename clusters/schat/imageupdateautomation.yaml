@@ -1,0 +1,38 @@
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageUpdateAutomation
+metadata:
+  name: schat
+  namespace: flux-system
+spec:
+  interval: 2m
+  sourceRef:
+    kind: GitRepository
+    name: schat-gitops
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: fluxbot
+        email: fluxbot@schat.cloud.podstack.ai
+      messageTemplate: |
+        chore(images): bump tags
+
+        Files:
+        {{ range $filename, $_ := .Changed.FileChanges -}}
+        - {{ $filename }}
+        {{ end }}
+        Updates:
+        {{ range .Changed.Changes -}}
+        - {{ .OldValue }} -> {{ .NewValue }}
+        {{ end -}}
+    push:
+      branch: main
+  update:
+    # Single file scanned for `{"$imagepolicy": "..."}` markers. Each marker
+    # in helm/schat/values.yaml references one of the three ImagePolicies
+    # above; the Setters strategy rewrites the adjacent value in place.
+    path: ./helm/schat/values.yaml
+    strategy: Setters

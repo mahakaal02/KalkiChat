@@ -1,0 +1,6 @@
+apiVersion: v2
+name: schat
+description: SChat secure messaging platform (backend, admin-web, retention) + in-cluster Postgres + MinIO
+type: application
+version: 0.1.0
+appVersion: "v1"

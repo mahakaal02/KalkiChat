@@ -1,0 +1,58 @@
+---
+# Background sweeper that purges expired messages + attachments per
+# the retention policy. Built from backend/Dockerfile.retention — same
+# Go module as the API, different binary, no HTTP listener. Mirrors
+# /bet's `backend-worker.yaml` pattern: Deployment only, no Service,
+# no IngressRoute.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schat-retention
+  labels:
+    {{- include "schat.labels" (dict "name" "retention" "ctx" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.retention.replicas }}
+  # Recreate — no health endpoint to drain via, and brief overlap
+  # during a rolling update would double-fire a sweep tick.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: retention
+      app.kubernetes.io/part-of: schat
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "retention" "ctx" .) | nindent 8 }}
+    spec:
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: retention
+          image: {{ include "schat.image" (dict "image" .Values.retention.image "tag" .Values.retention.imageTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # No `ports` block — retention has no HTTP listener.
+          env:
+            - name: DATABASE_URL
+              value: {{ include "schat.databaseUrl" (dict "override" .Values.retention.databaseUrl "ctx" .) | quote }}
+            - name: RETENTION_SWEEP_INTERVAL
+              value: {{ .Values.retention.sweepInterval | quote }}
+            {{- include "schat.redisEnv" . | nindent 12 }}
+            {{- include "schat.s3Env" . | nindent 12 }}
+            {{- range $k, $v := .Values.retention.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: schat-shared
+          # No readiness/liveness probes — no listening socket. A stuck
+          # event loop would also fail to respond to SIGTERM, which
+          # Kubernetes surfaces as CrashLoopBackOff regardless. If
+          # operational evidence later shows silent hangs, swap in an
+          # exec probe (e.g. `ps -p 1`).
+          resources:
+            {{- toYaml .Values.retention.resources | nindent 12 }}

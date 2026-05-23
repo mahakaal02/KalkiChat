@@ -1,0 +1,49 @@
+# One ImagePolicy per schat image. Match the timestamp+sha tag pattern the
+# GitHub Actions workflow stamps onto every push: YYYYMMDDTHHMMSSZ-<sha7>.
+# Sort lexicographically ascending → newest tag wins (the timestamp prefix
+# sorts naturally so the largest-by-string is the most-recent-by-time).
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: schat-backend
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: schat-backend
+  filterTags:
+    # Matches YYYYMMDDTHHMMSSZ-<sha7> (e.g. 20260523T194516Z-1f5d5a1).
+    # Same regex /bet uses so a future tag-format change here lines
+    # up across both stacks.
+    pattern: '^[0-9]{8}[T-][0-9]+Z?-[a-f0-9]{7}$'
+  policy:
+    alphabetical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: schat-admin-web
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: schat-admin-web
+  filterTags:
+    pattern: '^[0-9]{8}[T-][0-9]+Z?-[a-f0-9]{7}$'
+  policy:
+    alphabetical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: schat-retention
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: schat-retention
+  filterTags:
+    pattern: '^[0-9]{8}[T-][0-9]+Z?-[a-f0-9]{7}$'
+  policy:
+    alphabetical:
+      order: asc
