@@ -1,0 +1,32 @@
+---
+# PodDisruptionBudget keeps at least one backend pod running through
+# node-drain events (cluster upgrades, longhorn evictions, etc.). Even
+# at replicas: 1, this still buys us a graceful drain blocker — the
+# node controller can't evict the lone pod without admin override,
+# which surfaces accidental drains rather than silently dropping the
+# API. Same pattern /bet's kalki chart uses for its public-facing pods.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: schat-backend
+  labels:
+    {{- include "schat.labels" (dict "name" "backend" "ctx" .) | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+      app.kubernetes.io/part-of: schat
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: schat-admin-web
+  labels:
+    {{- include "schat.labels" (dict "name" "admin-web" "ctx" .) | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-web
+      app.kubernetes.io/part-of: schat

@@ -65,11 +65,27 @@ spec:
       labels:
         {{- include "schat.labels" (dict "name" "postgres" "ctx" .) | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- include "schat.nodeAffinity" . | nindent 6 }}
+      # postgres:16-alpine entrypoint expects to start as root and gosu
+      # itself down to the postgres user (UID 70). We pin fsGroup so the
+      # PVC is owned by that group and the data dir stays read/write
+      # after the entrypoint drops privileges. runAsNonRoot at the
+      # container level is intentionally omitted — the entrypoint
+      # requires root for the initial chown.
+      securityContext:
+        fsGroup: 70
       containers:
         - name: postgres
           image: {{ .Values.postgres.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 5432
               name: postgres

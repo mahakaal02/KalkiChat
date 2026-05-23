@@ -18,6 +18,14 @@ same mental model.
 | `schat-shared` | Secret with JWT keys + TOTP encryption key | always |
 | `schat-postgres` (Secret) | Postgres root credentials | `postgres.enabled` |
 | `schat-minio` (Secret) | MinIO root credentials | `minio.enabled` |
+| `schat-backend` / `schat-admin-web` (PDB) | minAvailable=1 PodDisruptionBudgets | always |
+
+Public Traefik hostnames default to `kalki-chat-<svc>.<global.domain>` —
+i.e. `kalki-chat-backend.cloud.podstack.ai` and
+`kalki-chat-admin-web.cloud.podstack.ai`. The `kalki-chat-` prefix
+avoids colliding with the bet stack's `kalki-backend` / `kalki-admin` /
+`kalki-aviator` / `kalki-bet` / `kalki-auctions` hosts that share the
+same namespace.
 
 Image refs are formed as
 `docker.io/saurav7055/<image>:<imageTag>`. Each per-service `imageTag`
@@ -91,3 +99,11 @@ diff -u /tmp/schat-before.yaml /tmp/schat-after.yaml | less
   correct default. Running >1 will double-fire every sweep tick. The data
   model is forgiving (idempotent deletes) but extra delete batches are
   pointless work.
+
+- **`app.kubernetes.io/name` is unprefixed.** Each workload sets the label
+  to its bare role (`backend`, `admin-web`, `retention`, `postgres`,
+  `minio`). In a shared namespace this clashes with other charts that
+  also have a `backend` — selector-immutable on Deployment makes renaming
+  costly. Always disambiguate with `app.kubernetes.io/part-of=schat` when
+  querying:
+  `kubectl -n kalki get pods -l app.kubernetes.io/name=backend,app.kubernetes.io/part-of=schat`

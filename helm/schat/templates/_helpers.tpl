@@ -88,6 +88,50 @@ Redis env block. The password is pulled from `schat-redis-creds`
 {{- end -}}
 
 {{/*
+Hardened container-level securityContext applied to every schat
+workload container. Drops ALL Linux capabilities, blocks privilege
+escalation, enforces non-root, and pins the seccomp profile to the
+runtime default. Pod-level UID/GID is set per-template (some images
+require specific UIDs — postgres needs 999, the Go images use 1001,
+Next.js node uses 1000).
+*/}}
+{{- define "schat.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+capabilities:
+  drop:
+    - ALL
+runAsNonRoot: true
+seccompProfile:
+  type: RuntimeDefault
+{{- end -}}
+
+{{/*
+InitContainer that blocks pod start until schat-postgres accepts
+connections. Eliminates the startup race where backend / retention
+crashloop a few times before DNS resolves the postgres Service.
+*/}}
+{{- define "schat.waitForPostgres" -}}
+- name: wait-for-postgres
+  image: {{ .Values.postgres.image | quote }}
+  imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+  command:
+    - sh
+    - -c
+    - |
+      until pg_isready -h schat-postgres -p 5432 -U {{ .Values.postgres.user }}; do
+        echo "waiting for schat-postgres..."
+        sleep 2
+      done
+  securityContext:
+    {{- include "schat.containerSecurityContext" . | nindent 4 }}
+    runAsUser: 999
+    runAsGroup: 999
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+{{- end -}}
+
+{{/*
 S3 / MinIO env block. The backend reads S3_ENDPOINT, S3_REGION,
 S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_FORCE_PATH_STYLE at boot.
 */}}

@@ -1,7 +1,12 @@
 # ─── global ────────────────────────────────────────────────────────────────
 global:
   domain: cloud.podstack.ai
-  hostnamePrefix: schat- # → schat-backend.cloud.podstack.ai, etc.
+  # The `kalki-chat-` prefix slots SChat's hostnames into the kalki-*
+  # family without colliding with the bet stack's existing kalki-backend
+  # / kalki-admin / kalki-auctions / kalki-aviator / kalki-bet hosts in
+  # the same namespace. Yields kalki-chat-backend.cloud.podstack.ai and
+  # kalki-chat-admin-web.cloud.podstack.ai.
+  hostnamePrefix: kalki-chat-
   imageRegistry: docker.io/saurav7055
   # Per-service `imageTag` (below) overrides this when set. Flux's
   # ImageUpdateAutomation only writes to the per-service field, so this
@@ -131,7 +136,7 @@ backend:
   # origin, not wildcard — see PR #3 for context). Pre-baked here so the
   # in-cluster Secret overlay doesn't have to be edited just to add the
   # admin URL. Extend by appending `,https://<your-origin>`.
-  allowedOrigins: "https://schat-admin-web.cloud.podstack.ai"
+  allowedOrigins: "https://kalki-chat-admin-web.cloud.podstack.ai"
   # TTLs for the JWT signer.
   jwtAccessTtl: "15m"
   jwtRefreshTtl: "168h"
