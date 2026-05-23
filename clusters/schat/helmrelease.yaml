@@ -1,0 +1,38 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: schat
+  namespace: schat
+spec:
+  releaseName: schat
+  targetNamespace: schat
+  interval: 5m
+  chart:
+    spec:
+      chart: ./helm/schat
+      # Re-fetch the chart on any GitRepository revision change, not just on
+      # Chart.yaml.version bump. Without this, source-controller caches the
+      # tar artifact and template edits don't take effect until version
+      # bumps. Same opinion /bet's HelmRelease ships with.
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: schat-gitops
+        namespace: flux-system
+  # Values inline are the safe baseline. Anything cluster-specific (e.g.
+  # the real Postgres password, real JWT keypair, real MinIO secret) is
+  # layered on top from the schat-helm-values Secret that exists only
+  # in-cluster (not in git). See clusters/schat/_bootstrap.yaml step 5.
+  valuesFrom:
+    - kind: Secret
+      name: schat-helm-values
+      valuesKey: values.yaml
+      optional: false
+  install:
+    remediation:
+      retries: 2
+  upgrade:
+    remediation:
+      retries: 2
+      remediateLastFailure: true

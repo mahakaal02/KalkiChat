@@ -1,0 +1,89 @@
+# One-time bootstrap. `kubectl apply -f clusters/schat/_bootstrap.yaml` wires
+# the cluster's flux-system to start reconciling clusters/schat/ in this repo.
+# Everything below this file is subsequently managed by Flux from git.
+#
+# Prerequisites (run once before applying this file):
+#
+#   1. Generate an SSH deploy key for this repo:
+#         ssh-keygen -t ed25519 -f /tmp/schat-flux -C flux@schat -N ''
+#      Add the public key (/tmp/schat-flux.pub) to mahakaal02/KalkiChat →
+#      Settings → Deploy keys, WITH "Allow write access" checked
+#      (ImageUpdateAutomation pushes commits).
+#
+#   2. Create the deploy-key Secret in flux-system:
+#         flux create secret git schat-gitops \
+#           --url=ssh://git@github.com/mahakaal02/KalkiChat \
+#           --private-key-file=/tmp/schat-flux \
+#           --namespace=flux-system
+#
+#   3. Create the schat namespace:
+#         kubectl create namespace schat
+#
+#   4. Create the redis credentials Secret in-cluster (NOT in git). Point
+#      the host at whichever Redis you run in this cluster (an existing
+#      bitnami/redis Helm install, an AWS ElastiCache endpoint, etc.):
+#         REDIS_PW=$(openssl rand -hex 24)
+#         kubectl -n schat create secret generic schat-redis-creds \
+#           --from-literal=redis-password="${REDIS_PW}" \
+#           --from-literal=redis-url="redis://:${REDIS_PW}@schat-redis-master.schat.svc.cluster.local:6379/0"
+#
+#   5. Create the in-cluster Helm values override Secret. Carries the real
+#      JWT keypair, TOTP encryption key, postgres password, MinIO root
+#      password — anything that must not land in git. Generate the values:
+#         openssl genpkey -algorithm ed25519 -out /tmp/jwt.pem
+#         openssl pkey -in /tmp/jwt.pem -pubout -out /tmp/jwt.pub.pem
+#         TOTP_KEY=$(openssl rand -hex 32)
+#         PG_PW=$(openssl rand -hex 24)
+#         MINIO_PW=$(openssl rand -hex 24)
+#         cat > /tmp/schat-values.yaml <<EOF
+#         sharedSecret:
+#           jwtPrivateKeyPem: |
+#         $(sed 's/^/    /' /tmp/jwt.pem)
+#           jwtPublicKeyPem: |
+#         $(sed 's/^/    /' /tmp/jwt.pub.pem)
+#           totpEncKeyHex: "${TOTP_KEY}"
+#         postgres:
+#           password: "${PG_PW}"
+#         minio:
+#           rootPassword: "${MINIO_PW}"
+#         s3:
+#           secretKey: "${MINIO_PW}"
+#         EOF
+#         kubectl -n schat create secret generic schat-helm-values \
+#           --from-file=values.yaml=/tmp/schat-values.yaml
+#         shred -u /tmp/schat-values.yaml /tmp/jwt.pem /tmp/jwt.pub.pem
+#
+#   6. Add DOCKERHUB_USERNAME + DOCKERHUB_TOKEN repo secrets to GitHub
+#      so .github/workflows/build-and-push.yml can push the images.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: schat-gitops
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: ssh://git@github.com/mahakaal02/KalkiChat
+  ref:
+    branch: main
+  secretRef:
+    name: schat-gitops    # the deploy-key Secret created in step 2 above
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: schat
+  namespace: flux-system
+spec:
+  interval: 2m
+  retryInterval: 1m
+  timeout: 5m
+  prune: true
+  path: ./clusters/schat
+  sourceRef:
+    kind: GitRepository
+    name: schat-gitops
+  # No targetNamespace — each resource declares its own (HelmRelease lives
+  # in schat, ImageRepository/Policy/UpdateAutomation in flux-system so the
+  # image-reflector + image-automation controllers can see them).
+  wait: true
