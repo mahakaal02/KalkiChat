@@ -115,7 +115,7 @@ backend:
   # Flux ImageUpdateAutomation rewrites the value of this field in
   # place. Do not remove the trailing comment marker — see
   # clusters/schat/imagepolicies.yaml + imageupdateautomation.yaml.
-  imageTag: 20260523T182501Z-cac5dc7 # {"$imagepolicy": "flux-system:schat-backend:tag"}
+  imageTag: 20260523T182706Z-57aaa99 # {"$imagepolicy": "flux-system:schat-backend:tag"}
   port: 8080
   replicas: 1
   databaseUrl: "" # if blank, built from postgres.{user,password}@schat-postgres/schat
