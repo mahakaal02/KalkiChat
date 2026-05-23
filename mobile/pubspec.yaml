@@ -66,5 +66,43 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+  # Generates Android mipmap-{m,h,xh,xxh,xxxh}dpi + the iOS AppIcon
+  # appiconset from a single source PNG. Run after replacing the icon:
+  #   dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.13.1
+
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/
+
+# ──────────────────────────────────────────────────────────────────────────
+# Launcher / app-icon source for both Android and iOS.
+#
+# The source PNG at `image_path` is processed by `flutter_launcher_icons`
+# and rewritten into:
+#   * android/app/src/main/res/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png
+#   * ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png
+#
+# iOS rejects PNGs with an alpha channel — `remove_alpha_ios: true`
+# composites the source over a solid background before writing the iOS
+# files. The Android side keeps the alpha so circular / squircle masks
+# still look right on launchers that apply them.
+#
+# `min_sdk_android: 21` matches mobile/android/app/build.gradle.kts;
+# adaptive-icon variants are not generated (the supplied logo includes
+# text near the bottom edge which would get clipped by the adaptive
+# mask). If you later want adaptive icons, supply a separate transparent
+# foreground PNG via `adaptive_icon_foreground` and a hex background via
+# `adaptive_icon_background`.
+#
+# DO NOT add a parallel block to admin-mobile/pubspec.yaml — the admin
+# companion app keeps a distinct icon by design so it can be visually
+# differentiated from the user app on shared devices.
+# ──────────────────────────────────────────────────────────────────────────
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/branding/app_icon.png"
+  remove_alpha_ios: true
+  min_sdk_android: 21
