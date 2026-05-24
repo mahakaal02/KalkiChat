@@ -152,7 +152,7 @@ adminWeb:
 # attachments per the deletion policy.
 retention:
   image: schat-retention
-  imageTag: 20260523T195743Z-660be82 # {"$imagepolicy": "flux-system:schat-retention:tag"}
+  imageTag: 20260524T040903Z-cbad04f # {"$imagepolicy": "flux-system:schat-retention:tag"}
   replicas: 1
   # How often the sweep loop runs. Backend reads RETENTION_SWEEP_INTERVAL
   # as a Go duration string ("60s", "5m", etc.).
@@ -162,7 +162,6 @@ retention:
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
-
 # ─── admin seed Job ────────────────────────────────────────────────────────
 # Optional one-shot Job that runs /seed (baked into the schat-backend image)
 # as a Helm post-install + post-upgrade hook. The seed binary does an
@@ -196,4 +195,4 @@ adminSeed:
   # below. Bump if you've tuned ARGON2_MEMORY_KIB / ARGON2_TIME upward.
   resources:
     requests: {cpu: 100m, memory: 256Mi}
-    limits:   {cpu: 1000m, memory: 512Mi}
+    limits: {cpu: 1000m, memory: 512Mi}
