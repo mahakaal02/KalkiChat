@@ -296,21 +296,35 @@ func adminGetConversation(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "NO_CONVERSATION", "")
 			return
 		}
-		// Admin's own device (we pick the most recent) is the recipient context.
+		// Pick *an* admin device for the recipient/sender filter so the
+		// admin web UI sees the user↔admin thread. Cookie sessions have
+		// Sub == admin id, bearer sessions have Sub == device id; use
+		// OwnerID (always admin id) to look up admin-owned devices.
+		adminID := c.OwnerID
+		if adminID == "" {
+			adminID = c.Sub
+		}
 		var adminDevice string
 		err = d.DB.QueryRow(r.Context(), `
 			SELECT id FROM devices WHERE owner_kind='admin' AND owner_id=$1 AND revoked_at IS NULL
 			ORDER BY last_seen_at DESC LIMIT 1
-		`, c.Sub).Scan(&adminDevice)
+		`, adminID).Scan(&adminDevice)
 		if err != nil {
 			writeErr(w, http.StatusFailedDependency, "NO_ADMIN_DEVICE", "")
 			return
 		}
+		// LEFT JOIN admin_plaintext so the response carries the decrypted
+		// body whenever admin-mobile has relayed it. Rows without a
+		// plaintext partner come back with `plaintext: null`, which the
+		// web UI renders as a "decrypting…" placeholder.
 		rows, err := d.DB.Query(r.Context(), `
-			SELECT id, sender_device_id, envelope, signature, media_id, created_at
-			FROM messages WHERE conversation_id=$1
-			  AND (sender_device_id=$2 OR recipient_device_id=$2)
-			ORDER BY created_at ASC
+			SELECT m.id, m.sender_device_id, m.envelope, m.signature, m.media_id, m.created_at,
+			       ap.body, ap.direction
+			FROM messages m
+			LEFT JOIN admin_plaintext ap ON ap.message_id = m.id
+			WHERE m.conversation_id=$1
+			  AND (m.sender_device_id=$2 OR m.recipient_device_id=$2)
+			ORDER BY m.created_at ASC
 			LIMIT 500
 		`, convoID, adminDevice)
 		if err != nil {
@@ -322,23 +336,66 @@ func adminGetConversation(d Deps) http.HandlerFunc {
 		for rows.Next() {
 			var id, sender string
 			var env, sig []byte
-			var mediaID *string
+			var mediaID, plaintext, direction *string
 			var created time.Time
-			if err := rows.Scan(&id, &sender, &env, &sig, &mediaID, &created); err != nil {
+			if err := rows.Scan(&id, &sender, &env, &sig, &mediaID, &created,
+				&plaintext, &direction); err != nil {
 				continue
 			}
-			msgs = append(msgs, map[string]any{
+			row := map[string]any{
 				"id":               id,
 				"sender_device_id": sender,
 				"envelope":         base64.StdEncoding.EncodeToString(env),
 				"signature":        base64.StdEncoding.EncodeToString(sig),
 				"media_id":         mediaID,
 				"created_at":       created,
-			})
+				// nil-safe: web UI checks `=== null` and falls back to the
+				// "decrypting…" placeholder when admin-mobile hasn't yet
+				// posted plaintext for this row.
+				"plaintext": plaintext,
+				"direction": direction,
+			}
+			msgs = append(msgs, row)
+		}
+
+		// Surface any pending outbound queue rows too, so admin-web shows
+		// "sending…" indicators for replies it just submitted but that
+		// admin-mobile hasn't drained yet. Bounded to 50; the queue
+		// shouldn't realistically grow past that for a single user.
+		qrows, err := d.DB.Query(r.Context(), `
+			SELECT id, body, status, last_error, created_at, sent_at, server_message_id
+			FROM admin_outbound_queue
+			WHERE user_id=$1
+			  AND (status='pending' OR (status IN ('sent','failed') AND created_at > NOW() - INTERVAL '24 hours'))
+			ORDER BY created_at ASC
+			LIMIT 50
+		`, userID)
+		pending := make([]map[string]any, 0)
+		if err == nil {
+			defer qrows.Close()
+			for qrows.Next() {
+				var qid, body, status string
+				var lastErr, serverMsgID *string
+				var created time.Time
+				var sentAt *time.Time
+				if err := qrows.Scan(&qid, &body, &status, &lastErr, &created, &sentAt, &serverMsgID); err != nil {
+					continue
+				}
+				pending = append(pending, map[string]any{
+					"id":                qid,
+					"body":              body,
+					"status":            status,
+					"last_error":        lastErr,
+					"created_at":        created,
+					"sent_at":           sentAt,
+					"server_message_id": serverMsgID,
+				})
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"conversation_id": convoID,
 			"messages":        msgs,
+			"outbound_queue":  pending,
 		})
 	}
 }
