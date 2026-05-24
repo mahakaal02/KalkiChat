@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/kalkichat/backend/internal/crypto"
 )
 
@@ -15,8 +17,13 @@ const (
 	ctxClaims ctxKey = "claims"
 )
 
-// authMiddleware enforces a valid bearer token.
-func authMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
+// authMiddleware enforces a valid bearer token. When [db] is non-nil it
+// also fire-and-forget refreshes devices.last_seen_at for the calling
+// device so downstream "online?" queries see a real timestamp instead of
+// the never-updated register-time default. We accept the rare false
+// positive (token-valid-but-revoked race) because the alternative is
+// every consumer of last_seen_at being permanently wrong.
+func authMiddleware(signer *crypto.JWTSigner, db *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if signer == nil {
@@ -33,6 +40,15 @@ func authMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
 				writeErr(w, http.StatusUnauthorized, "INVALID_TOKEN", err.Error())
 				return
 			}
+			// Bearer tokens have Sub == device_id. Async + no error
+			// propagation: this MUST NOT add latency to the request path
+			// or block on the DB.
+			if db != nil && c.Sub != "" {
+				go func(dev string) {
+					_, _ = db.Exec(context.Background(),
+						`UPDATE devices SET last_seen_at = NOW() WHERE id = $1`, dev)
+				}(c.Sub)
+			}
 			ctx := context.WithValue(r.Context(), ctxClaims, c)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -43,7 +59,11 @@ func authMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
 // the admin_session cookie (admin web dashboard) or a Bearer header
 // (admin companion-device mobile app, post /v1/admin/devices/register).
 // Cookie takes precedence so the web flow stays unchanged.
-func adminAuthMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handler {
+//
+// Like authMiddleware, this also refreshes devices.last_seen_at when the
+// caller is using a Bearer token (admin mobile) — cookie sessions don't
+// carry a device id (Sub == admin id), so they're left alone.
+func adminAuthMiddleware(signer *crypto.JWTSigner, db *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if signer == nil {
@@ -51,10 +71,12 @@ func adminAuthMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handl
 				return
 			}
 			var token string
+			isBearer := false
 			if c, err := r.Cookie("admin_session"); err == nil {
 				token = c.Value
 			} else if b := bearer(r); b != "" {
 				token = b
+				isBearer = true
 			}
 			if token == "" {
 				writeErr(w, http.StatusUnauthorized, "MISSING_SESSION", "")
@@ -64,6 +86,14 @@ func adminAuthMiddleware(signer *crypto.JWTSigner) func(http.Handler) http.Handl
 			if err != nil || c.Owner != "admin" {
 				writeErr(w, http.StatusUnauthorized, "INVALID_SESSION", "")
 				return
+			}
+			// Only Bearer tokens have Sub == device_id. Cookie sessions
+			// have Sub == admin_id and there's no device to touch.
+			if isBearer && db != nil && c.Sub != "" {
+				go func(dev string) {
+					_, _ = db.Exec(context.Background(),
+						`UPDATE devices SET last_seen_at = NOW() WHERE id = $1`, dev)
+				}(c.Sub)
 			}
 			ctx := context.WithValue(r.Context(), ctxClaims, c)
 			next.ServeHTTP(w, r.WithContext(ctx))

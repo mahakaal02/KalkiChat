@@ -86,6 +86,14 @@ func (h *Hub) Run(ctx context.Context) {
 			if c.Kind == "user" {
 				go h.subscribe(ctx, redisx.UserChannel(c.OwnerID))
 			}
+			// Refresh last_seen_at on every connect. Without this the
+			// devices.last_seen_at column stays frozen at the value the
+			// device-register handler wrote (NOW() at registration) and
+			// every downstream consumer (active-admin pool ordering,
+			// "online?" indicators, retention candidates) is operating on
+			// stale data. Fire-and-forget — we don't want a slow DB write
+			// to delay the WS upgrade.
+			go h.touchLastSeen(context.Background(), c.DeviceID)
 			log.Debug().Str("device", c.DeviceID).Msg("ws register")
 		case c := <-h.unregister:
 			h.mu.Lock()
@@ -94,7 +102,29 @@ func (h *Hub) Run(ctx context.Context) {
 				close(c.send)
 			}
 			h.mu.Unlock()
+			// One more touch on the way out so the column reflects "last
+			// time this device was actually online" rather than the
+			// connect time only.
+			go h.touchLastSeen(context.Background(), c.DeviceID)
 		}
+	}
+}
+
+// TouchLastSeen refreshes devices.last_seen_at for the given device. Safe
+// to call from any goroutine; errors are logged at debug level and
+// otherwise swallowed (the function is best-effort liveness, not a
+// correctness primitive).
+func (h *Hub) TouchLastSeen(ctx context.Context, deviceID string) {
+	h.touchLastSeen(ctx, deviceID)
+}
+
+func (h *Hub) touchLastSeen(ctx context.Context, deviceID string) {
+	if h.db == nil || deviceID == "" {
+		return
+	}
+	if _, err := h.db.Exec(ctx,
+		`UPDATE devices SET last_seen_at = NOW() WHERE id = $1`, deviceID); err != nil {
+		log.Debug().Err(err).Str("device", deviceID).Msg("ws: touch last_seen_at")
 	}
 }
 
