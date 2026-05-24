@@ -13,7 +13,10 @@ dependencies:
   flutter_riverpod: ^2.5.1
   go_router: ^14.2.7
   dio: ^5.7.0
-  http_certificate_pinning: ^3.0.1
+  # Chain-walking SPKI cert pinning — see mobile/pubspec.yaml for the
+  # full rationale. Replaces http_certificate_pinning.
+  schat_cert_pinning:
+    path: ../packages/schat_cert_pinning
   cryptography: ^2.7.0
   cryptography_flutter: ^2.3.2
   flutter_secure_storage: ^9.2.2
