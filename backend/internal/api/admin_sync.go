@@ -60,26 +60,39 @@ import (
 // Body:
 //
 //	{
-//	  "message_id":      "msg_...",     // FK into messages.id
-//	  "conversation_id": "cnv_...",     // denormalized for cheap reads
-//	  "body":            "hello there"
+//	  "message_id": "msg_...",      // FK into messages.id
+//	  "body":       "hello there"
 //	}
+//
+// `conversation_id` and `direction` are derived server-side from the
+// existing messages row — admin-mobile only needs to know which row it
+// decrypted, not how the server denormalizes it.
 //
 // Idempotent: ON CONFLICT (message_id) DO NOTHING. Mobile clients are
 // free to re-post on retry; we'll silently skip duplicates so the admin
 // web view doesn't see stale plaintext flicker.
+//
+// Auth check: caller must be an admin owner (adminAuthMiddleware enforces),
+// and the message they're posting plaintext for must involve one of their
+// admin devices (sender OR recipient). Without that gate any compromised
+// admin token could write fake plaintext into conversations its operator
+// isn't even on.
 func adminSyncInbound(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		c := claimsFromCtx(r.Context())
+		if c == nil || c.OwnerID == "" {
+			writeErr(w, http.StatusUnauthorized, "NO_CLAIMS", "")
+			return
+		}
 		var in struct {
-			MessageID      string `json:"message_id"`
-			ConversationID string `json:"conversation_id"`
-			Body           string `json:"body"`
+			MessageID string `json:"message_id"`
+			Body      string `json:"body"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, "BAD_JSON", err.Error())
 			return
 		}
-		if in.MessageID == "" || in.ConversationID == "" || in.Body == "" {
+		if in.MessageID == "" || in.Body == "" {
 			writeErr(w, http.StatusBadRequest, "MISSING_FIELDS", "")
 			return
 		}
@@ -92,15 +105,25 @@ func adminSyncInbound(d Deps) http.HandlerFunc {
 		}
 		ctx := r.Context()
 
-		// Verify the message exists in the named conversation. Without this
-		// any admin device could write arbitrary plaintext into any
-		// conversation. The FK on admin_plaintext.message_id catches the
-		// "message_id doesn't exist" case, but not the "wrong conversation"
-		// case — so check both in one round-trip.
-		var realConv string
-		err := d.DB.QueryRow(ctx,
-			`SELECT conversation_id FROM messages WHERE id = $1`, in.MessageID).
-			Scan(&realConv)
+		// Pull conversation_id + direction in one shot; verify the caller
+		// is on at least one end of the message. Direction is computed
+		// from the *admin* device's perspective: "inbound" = a user sent
+		// it to us; "outbound" = we sent it to the user.
+		var (
+			conversationID string
+			direction      string
+			involves       bool
+		)
+		err := d.DB.QueryRow(ctx, `
+			SELECT m.conversation_id,
+			       CASE WHEN rd.owner_kind = 'admin' THEN 'inbound' ELSE 'outbound' END,
+			       (sd.owner_kind = 'admin' AND sd.owner_id = $2)
+			          OR (rd.owner_kind = 'admin' AND rd.owner_id = $2)
+			FROM messages m
+			JOIN devices sd ON sd.id = m.sender_device_id
+			JOIN devices rd ON rd.id = m.recipient_device_id
+			WHERE m.id = $1
+		`, in.MessageID, c.OwnerID).Scan(&conversationID, &direction, &involves)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "UNKNOWN_MESSAGE", "")
 			return
@@ -109,26 +132,8 @@ func adminSyncInbound(d Deps) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
 			return
 		}
-		if realConv != in.ConversationID {
-			writeErr(w, http.StatusBadRequest, "CONVERSATION_MISMATCH", "")
-			return
-		}
-
-		// Direction: we mirror what messages.recipient_device_id tells us.
-		// If the recipient is an admin device, the user sent it (inbound).
-		// Otherwise an admin sent it (outbound) — that case is normally
-		// covered by the /outbound/{id}/sent path, but keeping the logic
-		// symmetric here means a future admin-mobile rewrite can use a
-		// single endpoint.
-		var direction string
-		err = d.DB.QueryRow(ctx, `
-			SELECT CASE WHEN dev.owner_kind = 'admin' THEN 'inbound' ELSE 'outbound' END
-			FROM messages m
-			JOIN devices dev ON dev.id = m.recipient_device_id
-			WHERE m.id = $1
-		`, in.MessageID).Scan(&direction)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
+		if !involves {
+			writeErr(w, http.StatusForbidden, "NOT_PARTICIPANT", "")
 			return
 		}
 
@@ -137,12 +142,16 @@ func adminSyncInbound(d Deps) http.HandlerFunc {
 			SELECT $1, $2, $3, $4, m.created_at, NOW()
 			FROM messages m WHERE m.id = $1
 			ON CONFLICT (message_id) DO NOTHING
-		`, in.MessageID, in.ConversationID, direction, in.Body)
+		`, in.MessageID, conversationID, direction, in.Body)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":              true,
+			"conversation_id": conversationID,
+			"direction":       direction,
+		})
 	}
 }
 
