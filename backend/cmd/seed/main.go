@@ -94,9 +94,8 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := db.Migrate(cfg.DatabaseURL, "migrations"); err != nil && err != db.ErrNoChange {
-		log.Fatalf("migrate: %v", err)
-	}
+	// No db.Migrate here: the backend pod runs migrations at startup, and
+	// the admin-seed Job has a wait-for-migrations init container.
 
 	id := "adm_" + uuid.NewString()
 	_, err = pool.Exec(ctx, `
