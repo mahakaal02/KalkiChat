@@ -240,6 +240,22 @@ class AdminLocalDb {
     );
   }
 
+  /// Pick the most-recently-seen peer device id for [userId]. Used when
+  /// the outbound-queue drainer needs to know which device to seal a
+  /// reply to: a user can have several devices, but we only have ratchet
+  /// state for ones we've already exchanged a message with, and the
+  /// most-recent one is overwhelmingly the right choice.
+  Future<String?> peerDeviceForUser(String userId) async {
+    final List<Map<String, Object?>> rows = await _db.rawQuery(
+      'SELECT peer_device_id FROM messages '
+      'WHERE user_id = ? '
+      'ORDER BY created_at DESC LIMIT 1',
+      <Object?>[userId],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['peer_device_id'] as String?;
+  }
+
   // ---- Serialization for DoubleRatchet ------------------------------------
   // Mirrors mobile/lib/data/local_db.dart so both apps speak the same blob
   // format. (Future move: extract into kalki_crypto.)

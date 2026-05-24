@@ -76,11 +76,15 @@ func NewRouter(d Deps) http.Handler {
 
 		// Authenticated user/admin routes.
 		r.Group(func(r chi.Router) {
-			r.Use(authMiddleware(signer))
+			r.Use(authMiddleware(signer, d.DB))
 			r.Post("/auth/logout", authLogout(d))
 			r.Post("/auth/change-password", authChangePassword(d))
 			// Active admin device pool — user mobile calls this when it
-			// has no cached admin device to seal a message to.
+			// has no cached admin device to seal a message to. Returns
+			// any non-revoked admin device (no last-seen cutoff) so that
+			// outbound messages can queue server-side even if the admin
+			// phone is asleep; admin-mobile will drain the WS backlog on
+			// its next connect.
 			r.Get("/admin-devices/active", adminDevicesActive(d))
 			r.Post("/prekeys", prekeysUpload(d))
 			r.Get("/prekeys/{device_id}", prekeysFetch(d))
@@ -90,6 +94,19 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/media/{id}/finalize", mediaFinalize(d))
 			r.Get("/media/{id}/download-url", mediaDownloadURL(d))
 			r.Get("/ws", wsHandler(d, msgSvc))
+		})
+
+		// Admin-sync: plaintext bridge between admin-mobile (decrypts)
+		// and admin-web (displays). See backend/internal/api/admin_sync.go
+		// for the architectural rationale. All endpoints accept either
+		// an admin_session cookie (web) or a Bearer JWT (mobile) — the
+		// adminAuthMiddleware handles both.
+		r.Route("/admin-sync", func(r chi.Router) {
+			r.Use(adminAuthMiddleware(signer, d.DB))
+			r.Post("/inbound", adminSyncInbound(d))
+			r.Post("/outbound", adminSyncOutboundEnqueue(d))
+			r.Get("/outbound/pending", adminSyncOutboundPending(d))
+			r.Post("/outbound/{id}/sent", adminSyncOutboundAck(d))
 		})
 
 		// Admin routes (cookie auth + TOTP).
@@ -106,7 +123,7 @@ func NewRouter(d Deps) http.Handler {
 			// `device:<id>` channel.
 			r.Post("/devices/register", adminDeviceRegister(d, signer, rec))
 			r.Group(func(r chi.Router) {
-				r.Use(adminAuthMiddleware(signer))
+				r.Use(adminAuthMiddleware(signer, d.DB))
 				r.Get("/users", adminListUsers(d))
 				r.Post("/users", adminCreateUser(d, rec))
 				r.Get("/users/{id}", adminGetUser(d))

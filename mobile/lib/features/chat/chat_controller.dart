@@ -86,15 +86,23 @@ class ChatController extends StateNotifier<ChatState> {
     }
 
     // Resolve the target admin device. For this MVP we cache one in the
-    // keystore; if missing, we query the backend's active admin pool and
-    // pick the most-recently-seen device. Multi-admin fan-out (sealing the
-    // same plaintext to N admin devices in parallel) is a v2 follow-up.
+    // keystore; if missing, we query the backend's *registered* admin pool
+    // (the endpoint no longer filters on last_seen — see PR for admin-sync).
+    // We pick the most-recently-seen device as a best-effort hint;
+    // offline-ness is fine because the message persists server-side as
+    // ciphertext in `messages` and admin-mobile drains it on reconnect.
+    // Multi-admin fan-out (sealing the same plaintext to N admin devices
+    // in parallel) is a v2 follow-up.
     String? peer = await HardwareKeystore.I.readString('admin_device_id');
     if (peer == null) {
       peer = await _resolveActiveAdminDevice();
       if (peer == null) {
+        // Truly zero admin devices registered against the cluster. The user
+        // can't do anything about this — the operator needs to provision
+        // an admin companion device first. Keep the wording calm; it's not
+        // a transient "try again" situation.
         _appendLocal(MessageDirection.outgoing,
-            '(no admin device online — try again shortly)');
+            '(your support team isn\'t set up yet — please contact your administrator)');
         return;
       }
       await HardwareKeystore.I.writeString('admin_device_id', peer);

@@ -5,13 +5,20 @@ import (
 	"time"
 )
 
-// adminDevicesActive returns the set of admin devices that are currently
-// considered "addressable" — i.e. the user mobile app should consider
-// fanning out a new support message to them. The list is filtered to:
+// adminDevicesActive returns the set of admin devices the user mobile app
+// can address when sending a new support message. We deliberately do NOT
+// filter on `last_seen_at` — an offline admin device is still a valid
+// envelope recipient. The message will sit in the `messages` table (and on
+// the admin device's Redis backfill stream) until admin-mobile reconnects
+// and drains it.
 //
+// Filter:
 //   * owner_kind = 'admin'
 //   * revoked_at IS NULL
-//   * last_seen_at within the last 24 hours
+//
+// We do still surface `last_seen_at` in the response so the user app can
+// optionally prefer the most-recently-seen device when fanning out, but
+// it's an ordering hint, not a hard cutoff.
 //
 // Each row carries the minimum the caller needs to start an X3DH session:
 //   {
@@ -24,25 +31,21 @@ import (
 // The caller will then fetch the prekey bundle for the device(s) it wants
 // to seal to via the existing GET /v1/prekeys/{device_id} endpoint.
 //
-// Auth: bearer JWT (user OR admin). We don't restrict to user-only because
-// admin devices may want to enumerate peer devices on the support team
-// too in a future multi-admin sync flow.
+// Auth: bearer JWT (user OR admin).
 //
 // Privacy: we deliberately do NOT expose admin email, identity keys, or
 // any other operator identifier — just the device handles needed for
 // E2E routing.
 func adminDevicesActive(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cutoff := time.Now().Add(-24 * time.Hour)
 		rows, err := d.DB.Query(r.Context(), `
 			SELECT id, owner_id, platform, last_seen_at
 			FROM devices
 			WHERE owner_kind = 'admin'
 			  AND revoked_at IS NULL
-			  AND last_seen_at >= $1
 			ORDER BY last_seen_at DESC
 			LIMIT 50
-		`, cutoff)
+		`)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
 			return

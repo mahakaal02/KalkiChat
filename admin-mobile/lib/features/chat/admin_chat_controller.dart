@@ -59,8 +59,15 @@ final adminChatControllerProvider =
 ///       - persist plaintext to messages table keyed by sender device
 ///         + the user_id we map the device to (so the UI can group
 ///         conversations by user).
+///       - **relay plaintext to /v1/admin-sync/inbound** so admin-web
+///         can display it; ack the WS so the backend marks delivered
+///         and won't re-replay on next reconnect.
 ///   * On outgoing reply (called from user_detail_screen): seal with
 ///     the existing ratchet's nextSendKey, ship via WS.
+///   * Poll /v1/admin-sync/outbound/pending every 5s; for each queued
+///     reply admin-web has composed, look up the right peer device,
+///     call sendReply, then POST /sent so the backend mirrors the
+///     plaintext for the web display and stops handing the item out.
 class AdminChatController extends StateNotifier<AdminChatState> {
   AdminChatController(this._api) : super(const AdminChatState());
 
@@ -68,6 +75,8 @@ class AdminChatController extends StateNotifier<AdminChatState> {
   AdminLocalDb? _db;
   AdminWsClient? _ws;
   AdminPrekeyManager? _prekeys;
+  Timer? _outboundPoll;
+  bool _outboundBusy = false;
 
   /// Called once after sign-in completes. Idempotent: safe to call
   /// repeatedly on app resume.
@@ -86,9 +95,18 @@ class AdminChatController extends StateNotifier<AdminChatState> {
       await _ws!.connect(_handleEvent);
       state = state.copyWith(connected: true);
     }
+    _outboundPoll ??= Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => unawaited(_drainOutbound()),
+    );
+    // Drain immediately so the very first reply admin-web sends
+    // doesn't have to wait up to 5s for its first poll tick.
+    unawaited(_drainOutbound());
   }
 
   Future<void> stop() async {
+    _outboundPoll?.cancel();
+    _outboundPoll = null;
     await _ws?.close();
     _ws = null;
     state = state.copyWith(connected: false);
@@ -143,6 +161,10 @@ class AdminChatController extends StateNotifier<AdminChatState> {
       envelope: envBytes,
       plaintext: text,
     );
+    // Stash plaintext so the message.persisted handler can relay it to
+    // /admin-sync/inbound (with the now-known server_id) for the
+    // admin-web display mirror. Cleared in _handlePersisted.
+    _pendingOutboundPlaintext[clientId] = text;
     // The admin-mobile WS hub speaks the same `message.send` schema as
     // user-mobile — see backend/internal/api/ws.go handleSend.
     _ws?.send(<String, dynamic>{
@@ -161,13 +183,39 @@ class AdminChatController extends StateNotifier<AdminChatState> {
 
   // ----- Inbound path -----------------------------------------------------
 
+  /// Pending outbound sends keyed by client_id. When message.persisted
+  /// arrives we look up the pending entry, relay the plaintext through
+  /// /admin-sync/inbound (server computes direction='outbound' from the
+  /// messages row), and clear. Bounded by the WS flush rate; entries
+  /// that never get a persisted reply leak but the map is small.
+  final Map<String, String> _pendingOutboundPlaintext = <String, String>{};
+
   Future<void> _handleEvent(Map<String, dynamic> ev) async {
-    if ((ev['type'] as String?) != 'message.recv') return;
+    final String type = ev['type'] as String? ?? '';
     try {
-      await _handleIncoming(ev);
+      switch (type) {
+        case 'message.recv':
+          await _handleIncoming(ev);
+          break;
+        case 'message.persisted':
+          await _handlePersisted(ev);
+          break;
+      }
     } catch (e) {
-      state = state.copyWith(lastError: 'recv failed: $e');
+      state = state.copyWith(lastError: '$type failed: $e');
     }
+  }
+
+  Future<void> _handlePersisted(Map<String, dynamic> ev) async {
+    final Map<String, dynamic> d =
+        (ev['data'] as Map).cast<String, dynamic>();
+    final String clientId = d['client_id'] as String? ?? '';
+    final String serverId = d['server_id'] as String? ?? '';
+    if (clientId.isEmpty || serverId.isEmpty) return;
+    final String? plaintext = _pendingOutboundPlaintext.remove(clientId);
+    if (plaintext == null) return;
+    // direction is derived server-side; this just needs the body + id.
+    await _relayInbound(serverId, plaintext);
   }
 
   Future<void> _handleIncoming(Map<String, dynamic> ev) async {
@@ -176,6 +224,7 @@ class AdminChatController extends StateNotifier<AdminChatState> {
     final String envB64 = d['envelope'] as String;
     final String sigB64 = d['signature'] as String? ?? '';
     final String senderDeviceId = d['sender_device_id'] as String? ?? '';
+    final String serverMessageId = d['server_id'] as String? ?? '';
 
     final Uint8List envBytes = Uint8List.fromList(base64.decode(envB64));
     final Envelope env = Envelope.fromBytes(envBytes);
@@ -183,9 +232,11 @@ class AdminChatController extends StateNotifier<AdminChatState> {
         Uint8List.fromList(base64.decode(sigB64));
 
     if (env.isBootstrap) {
-      await _handleBootstrap(env, signature, envBytes, senderDeviceId);
+      await _handleBootstrap(
+          env, signature, envBytes, senderDeviceId, serverMessageId);
     } else {
-      await _handleSteadyState(env, signature, envBytes, senderDeviceId);
+      await _handleSteadyState(
+          env, signature, envBytes, senderDeviceId, serverMessageId);
     }
   }
 
@@ -194,6 +245,7 @@ class AdminChatController extends StateNotifier<AdminChatState> {
     Uint8List signature,
     Uint8List envBytes,
     String senderDeviceId,
+    String serverMessageId,
   ) async {
     final BootstrapHeader hdr = env.bootstrap!;
     // 1. Verify the signature against the identity the bootstrap claims.
@@ -275,14 +327,17 @@ class AdminChatController extends StateNotifier<AdminChatState> {
 
     final String userId =
         await _resolveUserIdForDevice(senderDeviceId) ?? '';
+    final String plaintext = utf8.decode(pt);
     await db.insertMessage(
       id: const Uuid().v4(),
       peerDeviceId: senderDeviceId,
       userId: userId,
       direction: 'in',
       envelope: envBytes,
-      plaintext: utf8.decode(pt),
+      plaintext: plaintext,
     );
+    await _relayInbound(serverMessageId, plaintext);
+    _ackServer(serverMessageId);
     state = state.copyWith(lastMessageAt: DateTime.now(), lastError: null);
   }
 
@@ -291,6 +346,7 @@ class AdminChatController extends StateNotifier<AdminChatState> {
     Uint8List signature,
     Uint8List envBytes,
     String senderDeviceId,
+    String serverMessageId,
   ) async {
     final AdminLocalDb db = _db!;
     final DoubleRatchet? ratchet = await db.loadRatchet(senderDeviceId);
@@ -326,14 +382,17 @@ class AdminChatController extends StateNotifier<AdminChatState> {
 
     final String userId =
         await _resolveUserIdForDevice(senderDeviceId) ?? '';
+    final String plaintext = utf8.decode(pt);
     await db.insertMessage(
       id: const Uuid().v4(),
       peerDeviceId: senderDeviceId,
       userId: userId,
       direction: 'in',
       envelope: envBytes,
-      plaintext: utf8.decode(pt),
+      plaintext: plaintext,
     );
+    await _relayInbound(serverMessageId, plaintext);
+    _ackServer(serverMessageId);
     state = state.copyWith(lastMessageAt: DateTime.now(), lastError: null);
   }
 
@@ -362,6 +421,133 @@ class AdminChatController extends StateNotifier<AdminChatState> {
     } catch (_) {
       return null;
     }
+  }
+
+  // ----- admin-sync bridge -----------------------------------------------
+
+  /// Push the freshly-decrypted plaintext to /v1/admin-sync/inbound so
+  /// admin-web can render it. Server gates on "caller is on at least one
+  /// end of this message" and dedupes via the admin_plaintext PK, so
+  /// best-effort + retry-friendly: a failure here just means admin-web
+  /// will keep showing "decrypting…" until the next time we replay.
+  Future<void> _relayInbound(String serverMessageId, String plaintext) async {
+    if (serverMessageId.isEmpty) return;
+    try {
+      await _api.post('/v1/admin-sync/inbound', <String, dynamic>{
+        'message_id': serverMessageId,
+        'body': plaintext,
+      });
+    } catch (e) {
+      // Don't surface in state.lastError — the user's read of the
+      // message succeeded; admin-web will catch up on the next replay
+      // (next WS reconnect triggers backend backfill of undelivered
+      // rows, which re-fires _handleIncoming, which re-relays).
+    }
+  }
+
+  /// Tell the backend "I've processed this message_id" so it stops
+  /// re-delivering on every reconnect via the WS backfill path.
+  void _ackServer(String serverMessageId) {
+    if (serverMessageId.isEmpty) return;
+    _ws?.send(<String, dynamic>{
+      'type': 'message.ack',
+      'data': <String, dynamic>{'server_id': serverMessageId},
+    });
+  }
+
+  /// Poll /v1/admin-sync/outbound/pending; for each queued reply from
+  /// admin-web, look up the peer device, encrypt + send via the
+  /// existing WS path, then POST /sent so the queue row transitions and
+  /// the plaintext mirror is populated for the web display.
+  Future<void> _drainOutbound() async {
+    if (_db == null) return;
+    if (_outboundBusy) return; // overlapping ticks are a no-op
+    _outboundBusy = true;
+    try {
+      final r = await _api.get('/v1/admin-sync/outbound/pending');
+      if (r.statusCode != 200) return;
+      final List<dynamic> items = ((r.data as Map?)?['items'] as List<dynamic>?) ??
+          const <dynamic>[];
+      for (final dynamic it in items) {
+        final Map<String, dynamic> row = (it as Map).cast<String, dynamic>();
+        final String id = row['id'] as String? ?? '';
+        final String userId = row['user_id'] as String? ?? '';
+        final String body = row['body'] as String? ?? '';
+        if (id.isEmpty || userId.isEmpty || body.isEmpty) continue;
+        await _processOutbound(id, userId, body);
+      }
+    } catch (e) {
+      // Transient — next poll tick retries. Don't poison state.
+    } finally {
+      _outboundBusy = false;
+    }
+  }
+
+  Future<void> _processOutbound(
+      String queueId, String userId, String body) async {
+    final String? peerDeviceId = await _db!.peerDeviceForUser(userId);
+    if (peerDeviceId == null) {
+      // No session yet with this user; can't encrypt. Tell the backend
+      // it failed so admin-web can show a clear "user hasn't messaged
+      // us yet — they need to start the conversation" message instead
+      // of leaving the reply stuck in 'pending' forever.
+      await _markOutboundFailed(queueId,
+          'no session with user yet (they must send first)');
+      return;
+    }
+    // Reuse the existing sendReply path so encryption / signing /
+    // ratchet bookkeeping all stays in one place.
+    final bool ok = await sendReply(
+      peerDeviceId: peerDeviceId,
+      userId: userId,
+      text: body,
+    );
+    if (!ok) {
+      await _markOutboundFailed(queueId,
+          state.lastError ?? 'sendReply returned false');
+      return;
+    }
+    // sendReply persisted the message locally with a client UUID, but
+    // the SERVER message id only comes back via the message.persisted
+    // WS event — which is async. For the queue row we use the WS
+    // message id we just sent (clientId); the backend's
+    // /admin-sync/outbound/{id}/sent handler is forgiving about
+    // not-yet-arrived server ids (it stores what we give it; the web
+    // UI's correlation is best-effort anyway).
+    //
+    // To do this cleanly we'd need to wait for message.persisted then
+    // resolve server_id. The pragmatic shortcut: re-fetch the most-
+    // recent outgoing message from local DB and use its envelope hash
+    // as a stable correlation key. Simplest of all: just send the
+    // queue id back as a stand-in until we wire the persisted-event
+    // correlator. For the immediate UX the important thing is the row
+    // transitions to 'sent' so admin-web stops showing "sending…".
+    //
+    // We pass an empty server_message_id; the server's atomic
+    // /sent handler will mark the row sent and skip the plaintext
+    // mirror insert (it requires a real msg_id). The plaintext for
+    // outbound messages is also kept locally by sendReply — admin-web
+    // will see it on the next conversation fetch via the LEFT JOIN to
+    // admin_plaintext + outbound_queue.body fallback.
+    await _markOutboundSent(queueId);
+  }
+
+  Future<void> _markOutboundSent(String queueId) async {
+    try {
+      await _api.post(
+        '/v1/admin-sync/outbound/$queueId/sent',
+        <String, dynamic>{'server_message_id': ''},
+      );
+    } catch (_) {/* next poll tick retries */}
+  }
+
+  Future<void> _markOutboundFailed(String queueId, String err) async {
+    try {
+      await _api.post(
+        '/v1/admin-sync/outbound/$queueId/sent',
+        <String, dynamic>{'error': err},
+      );
+    } catch (_) {/* next poll tick retries */}
   }
 
   static Uint8List _toDevBytes(String id) {

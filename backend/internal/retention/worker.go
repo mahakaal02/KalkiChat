@@ -72,6 +72,7 @@ func (w *Worker) sweepOnce(ctx context.Context) {
 	w.purgeMedia(ctx)
 	w.purgePrekeys(ctx)
 	w.purgeAuth(ctx)
+	w.purgeAdminSync(ctx)
 }
 
 // purgeMessages: hard-delete ciphertext older than TTL. Index makes this fast.
@@ -153,4 +154,31 @@ func (w *Worker) purgeAuth(ctx context.Context) {
 	_, _ = w.db.Exec(ctx, `
 		DELETE FROM login_failures WHERE attempted_at < NOW() - INTERVAL '24 hours'
 	`)
+}
+
+// purgeAdminSync trims the admin-web plaintext mirror and the outbound
+// queue tail. The mirror has a hard 30-day TTL by operator policy — see
+// migration 0003 docstring. Outbound queue rows are reaped 24h after they
+// reach a terminal state so admin-web has time to render the delivery
+// indicator; pending rows are NEVER expired (a backlog of unsent messages
+// means admin-mobile is offline, not that the messages should be dropped).
+func (w *Worker) purgeAdminSync(ctx context.Context) {
+	if tag, err := w.db.Exec(ctx, `
+		DELETE FROM admin_plaintext
+		WHERE decrypted_at < NOW() - INTERVAL '30 days'
+	`); err != nil {
+		log.Error().Err(err).Msg("retention: purge admin_plaintext")
+	} else if n := tag.RowsAffected(); n > 0 {
+		log.Info().Int64("rows", n).Msg("retention: admin_plaintext purged")
+	}
+
+	if tag, err := w.db.Exec(ctx, `
+		DELETE FROM admin_outbound_queue
+		WHERE status IN ('sent','failed')
+		  AND COALESCE(sent_at, created_at) < NOW() - INTERVAL '24 hours'
+	`); err != nil {
+		log.Error().Err(err).Msg("retention: purge admin_outbound_queue")
+	} else if n := tag.RowsAffected(); n > 0 {
+		log.Info().Int64("rows", n).Msg("retention: admin_outbound_queue purged")
+	}
 }

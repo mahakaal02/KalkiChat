@@ -7,6 +7,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
@@ -15,6 +16,7 @@ import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
 import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLException
 import android.util.Base64
 
 /**
@@ -75,6 +77,42 @@ class SchatCertPinningPlugin : FlutterPlugin, MethodCallHandler {
             } catch (e: SocketTimeoutException) {
                 mainHandler.post {
                     result.error("NO_INTERNET", "Handshake timeout", e.localizedMessage)
+                }
+            } catch (e: SecurityException) {
+                // App is missing android.permission.INTERNET. Distinct from a
+                // real cert / chain failure — surface it cleanly so the Dart
+                // side can give the user something actionable instead of the
+                // misleading "bad certificate" wrapping.
+                mainHandler.post {
+                    result.error(
+                        "NO_INTERNET_PERMISSION",
+                        "App lacks android.permission.INTERNET",
+                        e.localizedMessage,
+                    )
+                }
+            } catch (e: SocketException) {
+                // EACCES from a missing INTERNET permission can also surface as
+                // a SocketException("Permission denied") depending on Android
+                // version; classify it by message rather than miscategorising
+                // as a handshake failure.
+                if (e.localizedMessage?.contains("Permission denied", ignoreCase = true) == true) {
+                    mainHandler.post {
+                        result.error(
+                            "NO_INTERNET_PERMISSION",
+                            "App lacks android.permission.INTERNET",
+                            e.localizedMessage,
+                        )
+                    }
+                } else {
+                    mainHandler.post {
+                        result.error("HANDSHAKE_FAILED", e.javaClass.simpleName, e.localizedMessage)
+                    }
+                }
+            } catch (e: SSLException) {
+                // Genuine TLS / chain problem — separate bucket so the message
+                // points at TLS rather than "the socket couldn't open".
+                mainHandler.post {
+                    result.error("TLS_ERROR", e.javaClass.simpleName, e.localizedMessage)
                 }
             } catch (e: Throwable) {
                 mainHandler.post {
