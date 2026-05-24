@@ -105,6 +105,8 @@ spec:
               value: {{ .Values.adminSeed.totpSecret | quote }}
             - name: DATABASE_URL
               value: {{ include "schat.databaseUrl" (dict "override" .Values.backend.databaseUrl "ctx" .) | quote }}
+            {{- include "schat.redisEnv" . | nindent 12 }}
+            {{- include "schat.s3Env" . | nindent 12 }}
           # Pulls TOTP_ENC_KEY_HEX from schat-shared — required so the
           # seeder can AES-GCM-encrypt the TOTP secret with the same key
           # the runtime backend uses to decrypt it during admin TOTP login.
