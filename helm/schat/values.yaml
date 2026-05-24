@@ -120,7 +120,7 @@ backend:
   # Flux ImageUpdateAutomation rewrites the value of this field in
   # place. Do not remove the trailing comment marker — see
   # clusters/schat/imagepolicies.yaml + imageupdateautomation.yaml.
-  imageTag: 20260524T061830Z-099c7bb # {"$imagepolicy": "flux-system:schat-backend:tag"}
+  imageTag: 20260524T062042Z-17072f5 # {"$imagepolicy": "flux-system:schat-backend:tag"}
   port: 8080
   replicas: 1
   databaseUrl: "" # if blank, built from postgres.{user,password}@schat-postgres/schat
@@ -152,7 +152,7 @@ adminWeb:
 # attachments per the deletion policy.
 retention:
   image: schat-retention
-  imageTag: 20260524T061838Z-099c7bb # {"$imagepolicy": "flux-system:schat-retention:tag"}
+  imageTag: 20260524T062036Z-17072f5 # {"$imagepolicy": "flux-system:schat-retention:tag"}
   replicas: 1
   # How often the sweep loop runs. Backend reads RETENTION_SWEEP_INTERVAL
   # as a Go duration string ("60s", "5m", etc.).
