@@ -270,23 +270,28 @@ func adminSyncOutboundPending(d Deps) http.HandlerFunc {
 // ── POST /v1/admin-sync/outbound/{id}/sent ─────────────────────────────────
 //
 // Called by admin-mobile after it has successfully encrypted + posted a
-// queued reply to /v1/admin/users/{user_id}/messages.
+// queued reply via the existing message.send WS path.
 //
 // Body:
 //
 //	{
-//	  "server_message_id": "msg_...",  // returned by the messages POST
+//	  "server_message_id": "msg_...",  // optional; assigned async by the
+//	                                   //   WS handler's message.persisted
+//	                                   //   event. Admin-mobile may not yet
+//	                                   //   have it when /sent fires.
 //	  "error":             ""          // set on failure; status becomes 'failed'
 //	}
 //
 // Side-effects on success:
-//   - admin_outbound_queue row → status='sent', sent_at=NOW(), server_message_id set
-//   - admin_plaintext row inserted (direction='outbound') so the web UI
-//     shows the reply we just wrapped, without waiting for admin-mobile
-//     to do a second roundtrip through /admin-sync/inbound.
+//   - admin_outbound_queue row → status='sent', sent_at=NOW(); optional
+//     server_message_id populated if supplied.
+//   - If server_message_id IS supplied: admin_plaintext row inserted
+//     (direction='outbound') so the web UI shows the reply immediately.
+//     If NOT: the plaintext mirror is populated separately by admin-mobile
+//     posting to /admin-sync/inbound once it correlates the WS
+//     message.persisted event with the queued body.
 //
-// On failure, status='failed' + last_error is set. The admin-web UI can
-// surface this so the operator knows to retry.
+// On failure, status='failed' + last_error is set.
 func adminSyncOutboundAck(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -320,14 +325,11 @@ func adminSyncOutboundAck(d Deps) http.HandlerFunc {
 			return
 		}
 
-		if in.ServerMessageID == "" {
-			writeErr(w, http.StatusBadRequest, "MISSING_SERVER_MESSAGE_ID", "")
-			return
-		}
-
-		// Both updates need to be atomic — partial success here would
-		// leave admin-web with a "sent" indicator but no plaintext to
-		// display.
+		// Both updates need to be atomic when we have a server_message_id —
+		// partial success would leave admin-web with a "sent" indicator
+		// but no plaintext to display. When no server_message_id is
+		// available yet, we just stamp the queue row and rely on
+		// /admin-sync/inbound to fill in the plaintext mirror later.
 		tx, err := d.DB.Begin(ctx)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
@@ -338,12 +340,18 @@ func adminSyncOutboundAck(d Deps) http.HandlerFunc {
 		var (
 			userID, body string
 		)
+		var serverMsgArg any
+		if in.ServerMessageID != "" {
+			serverMsgArg = in.ServerMessageID
+		} else {
+			serverMsgArg = nil
+		}
 		err = tx.QueryRow(ctx, `
 			UPDATE admin_outbound_queue
 			SET status = 'sent', sent_at = NOW(), server_message_id = $2
 			WHERE id = $1 AND status = 'pending'
 			RETURNING user_id, body
-		`, id, in.ServerMessageID).Scan(&userID, &body)
+		`, id, serverMsgArg).Scan(&userID, &body)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Already acked or unknown id. Treat as idempotent success so
 			// the mobile client's retry loop doesn't keep spinning.
@@ -355,18 +363,19 @@ func adminSyncOutboundAck(d Deps) http.HandlerFunc {
 			return
 		}
 
-		// Mirror the plaintext so admin-web shows the reply immediately.
-		// Reuses messages.created_at as the canonical wall-clock so the
-		// web view sorts identically to a fresh decrypt.
-		_, err = tx.Exec(ctx, `
-			INSERT INTO admin_plaintext (message_id, conversation_id, direction, body, created_at, decrypted_at)
-			SELECT $1, m.conversation_id, 'outbound', $2, m.created_at, NOW()
-			FROM messages m WHERE m.id = $1
-			ON CONFLICT (message_id) DO NOTHING
-		`, in.ServerMessageID, body)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "DB", err.Error())
-			return
+		// Mirror the plaintext immediately when we have a server_id;
+		// otherwise admin-mobile will POST /admin-sync/inbound for this
+		// message_id when its WS message.persisted handler fires.
+		if in.ServerMessageID != "" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO admin_plaintext (message_id, conversation_id, direction, body, created_at, decrypted_at)
+				SELECT $1, m.conversation_id, 'outbound', $2, m.created_at, NOW()
+				FROM messages m WHERE m.id = $1
+				ON CONFLICT (message_id) DO NOTHING
+			`, in.ServerMessageID, body); err != nil {
+				writeErr(w, http.StatusInternalServerError, "DB", err.Error())
+				return
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			writeErr(w, http.StatusInternalServerError, "DB", err.Error())

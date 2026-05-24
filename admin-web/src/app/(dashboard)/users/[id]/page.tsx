@@ -10,6 +10,15 @@ type Message = {
   id: string; sender_device_id: string;
   envelope: string; signature: string;
   media_id: string | null; created_at: string;
+  plaintext: string | null;
+  direction: 'inbound' | 'outbound' | null;
+};
+type Outbound = {
+  id: string; body: string;
+  status: 'pending' | 'sent' | 'failed';
+  last_error: string | null;
+  created_at: string; sent_at: string | null;
+  server_message_id: string | null;
 };
 
 export default async function UserDetailPage({
@@ -17,15 +26,23 @@ export default async function UserDetailPage({
 }: { params: { id: string } }) {
   const [userR, convoR] = await Promise.all([
     api.internal<UserDetail>(`/v1/admin/users/${params.id}`),
-    api.internal<{ conversation_id: string; messages: Message[] }>(
-      `/v1/admin/users/${params.id}/conversation`,
-    ),
+    api.internal<{
+      conversation_id: string;
+      messages: Message[];
+      outbound_queue: Outbound[];
+    }>(`/v1/admin/users/${params.id}/conversation`),
   ]);
   if (!userR.ok) {
     return <div className="text-danger">Failed: {userR.error.message}</div>;
   }
   const u = userR.data;
-  const convo = convoR.ok ? convoR.data : { conversation_id: '', messages: [] };
+  const convo = convoR.ok
+    ? {
+        conversation_id: convoR.data.conversation_id,
+        messages: convoR.data.messages ?? [],
+        outbound_queue: convoR.data.outbound_queue ?? [],
+      }
+    : { conversation_id: '', messages: [], outbound_queue: [] };
   return (
     <section className="space-y-5">
       <header className="flex items-center justify-between">
@@ -49,7 +66,7 @@ export default async function UserDetailPage({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="card lg:col-span-2 h-[70vh] flex flex-col">
           <h2 className="text-sm uppercase tracking-wider text-gray-400 mb-2">Conversation</h2>
-          <ConversationView userId={u.id} messages={convo.messages} />
+          <ConversationView userId={u.id} initial={convo} />
         </div>
         <div className="card h-[70vh] overflow-y-auto">
           <h2 className="text-sm uppercase tracking-wider text-gray-400 mb-2">Devices</h2>

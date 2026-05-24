@@ -9,7 +9,23 @@ type Message = {
   signature: string;
   media_id: string | null;
   created_at: string;
+  // Populated by admin-mobile via /v1/admin-sync/inbound. nullable until
+  // admin-mobile has decrypted + relayed; the client renders a
+  // "decrypting…" placeholder for null rows.
+  plaintext: string | null;
+  direction: 'inbound' | 'outbound' | null;
 };
+
+type Outbound = {
+  id: string;
+  body: string;
+  status: 'pending' | 'sent' | 'failed';
+  last_error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  server_message_id: string | null;
+};
+
 type UserDetail = {
   id: string;
   login: string;
@@ -22,9 +38,11 @@ export default async function MessagesUserPage({
 }: { params: { userId: string } }) {
   const [userR, convoR] = await Promise.all([
     api.internal<UserDetail>(`/v1/admin/users/${params.userId}`),
-    api.internal<{ conversation_id: string; messages: Message[] }>(
-      `/v1/admin/users/${params.userId}/conversation`,
-    ),
+    api.internal<{
+      conversation_id: string;
+      messages: Message[];
+      outbound_queue: Outbound[];
+    }>(`/v1/admin/users/${params.userId}/conversation`),
   ]);
   if (!userR.ok) {
     return (
@@ -34,7 +52,15 @@ export default async function MessagesUserPage({
     );
   }
   const u = userR.data;
-  const convo = convoR.ok ? convoR.data : { conversation_id: '', messages: [] };
+  // Default outbound_queue to [] so older backend versions (pre-PR #16)
+  // don't crash the client during a partial rollout.
+  const convo = convoR.ok
+    ? {
+        conversation_id: convoR.data.conversation_id,
+        messages: convoR.data.messages ?? [],
+        outbound_queue: convoR.data.outbound_queue ?? [],
+      }
+    : { conversation_id: '', messages: [], outbound_queue: [] };
 
   return (
     <div className="h-full flex flex-col">
@@ -65,14 +91,16 @@ export default async function MessagesUserPage({
         </Link>
       </header>
 
-      <div className="px-6 py-2 bg-amber-900/10 border-b border-amber-900/20 text-xs text-amber-200">
-        🔒 End-to-end encrypted. Message bodies are sealed to user devices;
-        decryption requires provisioning an admin device key (not yet wired).
-        The list below shows metadata only.
+      <div className="px-6 py-2 bg-emerald-900/10 border-b border-emerald-900/20 text-xs text-emerald-200">
+        🔒 End-to-end encrypted. Decryption happens on the admin
+        companion device; the plaintext you see below is mirrored
+        through /v1/admin-sync after the device decrypts. Replies you
+        compose here are queued and the admin device wraps them before
+        sending — that&apos;s the &quot;sending…&quot; indicator.
       </div>
 
       <div className="flex-1 px-6 py-4 overflow-hidden">
-        <ConversationView userId={u.id} messages={convo.messages} />
+        <ConversationView userId={u.id} initial={convo} />
       </div>
     </div>
   );
