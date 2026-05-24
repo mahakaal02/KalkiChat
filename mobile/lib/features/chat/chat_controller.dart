@@ -85,25 +85,42 @@ class ChatController extends StateNotifier<ChatState> {
       return;
     }
 
-    // Resolve the target admin device. For this MVP we cache one in the
-    // keystore; if missing, we query the backend's *registered* admin pool
-    // (the endpoint no longer filters on last_seen — see PR for admin-sync).
-    // We pick the most-recently-seen device as a best-effort hint;
-    // offline-ness is fine because the message persists server-side as
-    // ciphertext in `messages` and admin-mobile drains it on reconnect.
-    // Multi-admin fan-out (sealing the same plaintext to N admin devices
-    // in parallel) is a v2 follow-up.
-    String? peer = await HardwareKeystore.I.readString('admin_device_id');
+    // Resolve the target admin device. We can't naively cache the device
+    // id forever: the operator may have re-registered admin-mobile, which
+    // mints a fresh device row with a new id. If we kept sending to the
+    // old id the backend would route the message to the stale Redis
+    // channel and the new admin device — subscribed to its own new
+    // channel — would never see it.
+    //
+    // So: always query /v1/admin-devices/active for the freshest device.
+    // It's a single cheap HTTP round-trip and the call also dual-purposes
+    // as the "is there any admin device at all?" check. We still keep a
+    // cache key, but only as a fallback when the network call fails —
+    // and we invalidate the on-disk ratchet for the OLD device whenever
+    // the active device changes, forcing a fresh X3DH bootstrap to the
+    // new one on the very next send.
+    final String? cached =
+        await HardwareKeystore.I.readString('admin_device_id');
+    String? peer = await _resolveActiveAdminDevice();
     if (peer == null) {
-      peer = await _resolveActiveAdminDevice();
+      // Network call failed (or returned empty). Fall back to the cached
+      // id if we have one; the message will still encrypt to that device
+      // and queue server-side. Only show the "no support team" copy when
+      // we have nothing whatsoever to send to.
+      peer = cached;
       if (peer == null) {
-        // Truly zero admin devices registered against the cluster. The user
-        // can't do anything about this — the operator needs to provision
-        // an admin companion device first. Keep the wording calm; it's not
-        // a transient "try again" situation.
         _appendLocal(MessageDirection.outgoing,
             '(your support team isn\'t set up yet — please contact your administrator)');
         return;
+      }
+    }
+    if (peer != cached) {
+      // Admin device rotated. Drop the cached ratchet so the next send
+      // re-bootstraps via X3DH against the new device's prekey bundle —
+      // otherwise we'd ship a steady-state envelope the new device has
+      // no session for and can't decrypt.
+      if (cached != null) {
+        await _db?.deleteRatchet(cached);
       }
       await HardwareKeystore.I.writeString('admin_device_id', peer);
     }

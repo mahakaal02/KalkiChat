@@ -156,6 +156,18 @@ class LocalDb {
     return _decodeRatchet(rows.first['blob']! as Uint8List);
   }
 
+  /// Forget the ratchet for [peerDeviceId]. Used when the admin operator
+  /// has re-registered their device — the old peer id will never accept
+  /// our steady-state envelopes again, so the next send must X3DH-
+  /// bootstrap to whatever the new peer device is.
+  Future<void> deleteRatchet(String peerDeviceId) async {
+    await _db.delete(
+      'ratchet_state',
+      where: 'peer_device_id = ?',
+      whereArgs: <Object?>[peerDeviceId],
+    );
+  }
+
   /// Outbox: persist outbound while offline.
   Future<void> enqueueOutbox({
     required String clientId,

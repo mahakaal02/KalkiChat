@@ -138,18 +138,22 @@ func (h *Hub) touchLastSeen(ctx context.Context, deviceID string) {
 }
 
 // backfillMissed replays undelivered messages addressed to deviceID by
-// re-publishing them on the device's own Redis channel. Bounded to 200
-// rows and the last 7 days so a misbehaving client can't trigger an
-// unbounded replay. Idempotent: the client's downstream dedupe (e.g.
-// admin_plaintext.message_id PK) catches anything that re-arrives.
+// pushing them directly onto the local client's send channel. Bounded
+// to 200 rows and the last 7 days so a misbehaving client can't
+// trigger an unbounded replay. Idempotent: the client's downstream
+// dedupe (e.g. admin_plaintext.message_id PK) catches anything that
+// re-arrives.
+//
+// We deliberately bypass Redis (no Publish) — the connection is local
+// to this pod, so there's no cross-pod fan-out to worry about, and a
+// direct write avoids racing the subscribe-complete handshake. The
+// earlier Publish-based implementation needed a 50ms sleep to give
+// SUBSCRIBE time to land on Redis, which was both slow AND sometimes
+// not enough (subscribe latency varies).
 func (h *Hub) backfillMissed(ctx context.Context, deviceID string) {
 	if h.db == nil || deviceID == "" {
 		return
 	}
-	// Tiny delay so the subscribe goroutine that opened device:<id>
-	// finishes wiring up before we publish. Without this, very fast
-	// clients can race the subscriber and miss the first event.
-	time.Sleep(50 * time.Millisecond)
 	rows, err := h.db.Query(ctx, `
 		SELECT id, sender_device_id, envelope, signature, media_id, created_at
 		FROM messages
@@ -164,37 +168,48 @@ func (h *Hub) backfillMissed(ctx context.Context, deviceID string) {
 		return
 	}
 	defer rows.Close()
-	count := 0
+	type pending struct {
+		id, sender string
+		env, sig   []byte
+		mediaID    *string
+		created    time.Time
+	}
+	var batch []pending
 	for rows.Next() {
-		var (
-			id, sender string
-			env, sig   []byte
-			mediaID    *string
-			created    time.Time
-		)
-		if err := rows.Scan(&id, &sender, &env, &sig, &mediaID, &created); err != nil {
+		var p pending
+		if err := rows.Scan(&p.id, &p.sender, &p.env, &p.sig, &p.mediaID, &p.created); err != nil {
 			continue
 		}
+		batch = append(batch, p)
+	}
+	if len(batch) == 0 {
+		return
+	}
+	// Look up the local client. If they connected and disconnected
+	// already, abort — there's no socket to write to. The next register
+	// will retry.
+	h.mu.RLock()
+	c := h.clients[deviceID]
+	h.mu.RUnlock()
+	if c == nil {
+		return
+	}
+	for _, p := range batch {
 		ev := ServerEvent{
 			Type: "message.recv",
 			Data: map[string]any{
-				"server_id":        id,
-				"sender_device_id": sender,
-				"envelope":         base64.StdEncoding.EncodeToString(env),
-				"signature":        base64.StdEncoding.EncodeToString(sig),
-				"media_id":         mediaID,
-				"created_at":       created.UnixMilli(),
+				"server_id":        p.id,
+				"sender_device_id": p.sender,
+				"envelope":         base64.StdEncoding.EncodeToString(p.env),
+				"signature":        base64.StdEncoding.EncodeToString(p.sig),
+				"media_id":         p.mediaID,
+				"created_at":       p.created.UnixMilli(),
 				"backfilled":       true,
 			},
 		}
-		if err := h.Publish(ctx, redisx.DeviceChannel(deviceID), ev); err != nil {
-			log.Debug().Err(err).Str("device", deviceID).Msg("ws: backfill publish")
-		}
-		count++
+		c.Send(ev)
 	}
-	if count > 0 {
-		log.Info().Str("device", deviceID).Int("count", count).Msg("ws: backfilled missed messages")
-	}
+	log.Info().Str("device", deviceID).Int("count", len(batch)).Msg("ws: backfilled missed messages")
 }
 
 func (h *Hub) subscribe(ctx context.Context, channel string) {
