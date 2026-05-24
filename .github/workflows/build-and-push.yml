@@ -3,6 +3,15 @@ name: Build & push container images
 on:
   push:
     branches: [main]
+    # Only trigger when actual source / build config changes — NOT on Flux's
+    # fluxbot `chore(images): bump tags` commits that touch values.yaml.
+    # Without this filter every Flux-bumped imageTag triggered a fresh
+    # build → new tag → another bump → another build, churning the cluster
+    # in a tight loop. Mirrors the /bet workflow's original filter.
+    paths:
+      - "backend/**"
+      - "admin-web/**"
+      - ".github/workflows/build-and-push.yml"
   workflow_dispatch:
 
 concurrency:
