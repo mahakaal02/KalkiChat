@@ -162,3 +162,38 @@ retention:
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
+
+# ─── admin seed Job ────────────────────────────────────────────────────────
+# Optional one-shot Job that runs /seed (baked into the schat-backend image)
+# as a Helm post-install + post-upgrade hook. The seed binary does an
+# INSERT … ON CONFLICT (email) DO UPDATE, so re-running on every upgrade
+# is idempotent — last-write-wins for password + TOTP secret.
+#
+# Default OFF so a fresh install doesn't auto-create credentials from
+# CHANGE_ME placeholders. To enable in prod:
+#   1. Override .Values.adminSeed.password and .Values.adminSeed.totpSecret
+#      in the in-cluster `schat-helm-values` Secret (NOT in git).
+#   2. Override .Values.adminSeed.enabled = true in the same Secret.
+#   3. The next HelmRelease reconcile fires the Job; subsequent reconciles
+#      re-fire it (idempotent — admins.email UNIQUE + ON CONFLICT DO UPDATE
+#      means the same password is re-applied each time).
+#
+# The Job ships with a wait-for-migrations initContainer that polls until
+# the `admins` table exists, so it can safely run before the backend pod
+# has finished its first migrate-on-startup cycle.
+adminSeed:
+  enabled: false
+  email: "admin@kalki.local"
+  # MUST be overridden in the in-cluster schat-helm-values Secret before
+  # enabling. The template won't refuse to render with these defaults —
+  # if you enable adminSeed without overriding, you'll seed a CHANGE_ME
+  # admin and that's a self-inflicted wound.
+  password: "CHANGE_ME_admin_seed_password"
+  # Base32, no padding. `python3 -c "import secrets,base64;print(base64.b32encode(secrets.token_bytes(20)).rstrip(b'=').decode())"`
+  # generates a fresh one. Example dev value: JBSWY3DPEHPK3PXP.
+  totpSecret: "CHANGE_ME_base32_totp_secret_no_padding"
+  # argon2id at OWASP-2024 defaults is CPU-bound for ~1s on the limits
+  # below. Bump if you've tuned ARGON2_MEMORY_KIB / ARGON2_TIME upward.
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits:   {cpu: 1000m, memory: 512Mi}

@@ -1,0 +1,116 @@
+{{- if .Values.adminSeed.enabled }}
+---
+# One-shot Job that invokes the /seed binary (built into the schat-backend
+# image; see backend/Dockerfile). The seed code does INSERT INTO admins …
+# ON CONFLICT (email) DO UPDATE so re-runs are idempotent — last-applied
+# password + TOTP secret wins on every reconcile.
+#
+# Lifecycle:
+#   * helm.sh/hook = post-install,post-upgrade  → runs every release
+#   * hook-weight 20 → fires AFTER the minio-init Job (weight 5) so the
+#     main release has fully applied (backend Deployment exists →
+#     migrate-on-startup runs → admins table exists)
+#   * hook-delete-policy = before-hook-creation,hook-succeeded
+#     → previous Job is cleaned up on each upgrade; the Job leaves itself
+#     behind if it failed so an operator can `kubectl logs job/schat-admin-seed`
+#
+# Inline env (not a separate Secret): the seed credentials are no more
+# sensitive than the schat-helm-values Secret that holds them upstream.
+# A separate Secret would force a tricky hook-ordering dance and the
+# threat model is unchanged (anyone with `get jobs` or `get secrets` in
+# the namespace can read either).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: schat-admin-seed
+  labels:
+    {{- include "schat.labels" (dict "name" "admin-seed" "ctx" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        {{- include "schat.labels" (dict "name" "admin-seed" "ctx" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      {{- include "schat.nodeAffinity" . | nindent 6 }}
+      # Distroless/static:nonroot UID, same as the backend pod.
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      initContainers:
+        {{- if .Values.postgres.enabled }}
+        {{- include "schat.waitForPostgres" . | nindent 8 }}
+        {{- end }}
+        # Block until the `admins` table exists — i.e. until the backend
+        # pod's startup-time migrations (via golang-migrate in cmd/server)
+        # have applied 0001_init. Without this gate, a fresh install where
+        # the Job runs concurrently with backend startup races the
+        # migration and errors with `relation "admins" does not exist`.
+        - name: wait-for-migrations
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "waiting for admins table to exist (migrations applied by backend pod)..."
+              until psql "$DATABASE_URL" -c "SELECT 1 FROM admins LIMIT 1" >/dev/null 2>&1; do
+                echo "  not ready, retrying in 3s..."
+                sleep 3
+              done
+              echo "admins table present — proceeding to seed"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            runAsUser: 999
+            runAsGroup: 999
+          env:
+            - name: DATABASE_URL
+              value: {{ include "schat.databaseUrl" (dict "override" .Values.backend.databaseUrl "ctx" .) | quote }}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits:   {cpu: 100m, memory: 64Mi}
+      containers:
+        - name: seed
+          image: {{ include "schat.image" (dict "image" .Values.backend.image "tag" .Values.backend.imageTag "ctx" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "schat.containerSecurityContext" . | nindent 12 }}
+          command: ["/seed"]
+          args:
+            - "-email"
+            - "$(SEED_EMAIL)"
+            - "-password"
+            - "$(SEED_PASSWORD)"
+            - "-totp"
+            - "$(SEED_TOTP_SECRET)"
+          env:
+            - name: SEED_EMAIL
+              value: {{ .Values.adminSeed.email | quote }}
+            - name: SEED_PASSWORD
+              value: {{ .Values.adminSeed.password | quote }}
+            - name: SEED_TOTP_SECRET
+              value: {{ .Values.adminSeed.totpSecret | quote }}
+            - name: DATABASE_URL
+              value: {{ include "schat.databaseUrl" (dict "override" .Values.backend.databaseUrl "ctx" .) | quote }}
+          # Pulls TOTP_ENC_KEY_HEX from schat-shared — required so the
+          # seeder can AES-GCM-encrypt the TOTP secret with the same key
+          # the runtime backend uses to decrypt it during admin TOTP login.
+          envFrom:
+            - secretRef:
+                name: schat-shared
+          resources:
+            {{- toYaml .Values.adminSeed.resources | nindent 12 }}
+{{- end }}

@@ -19,6 +19,7 @@ same mental model.
 | `schat-postgres` (Secret) | Postgres root credentials | `postgres.enabled` |
 | `schat-minio` (Secret) | MinIO root credentials | `minio.enabled` |
 | `schat-backend` / `schat-admin-web` (PDB) | minAvailable=1 PodDisruptionBudgets | always |
+| `schat-admin-seed` (Job) | One-shot helm-hook Job that runs `/seed` to insert/upsert an admin row | `adminSeed.enabled: true` |
 
 Public Traefik hostnames default to `kalki-chat-<svc>.<global.domain>` —
 i.e. `kalki-chat-backend.cloud.podstack.ai` and
@@ -76,6 +77,33 @@ Common overrides:
 | `backend.allowedOrigins` | CORS | Add prod admin URL |
 | `minio.enabled` | bool | false if using managed S3 |
 | `postgres.enabled` | bool | false if using managed Postgres |
+| `adminSeed.enabled` + `adminSeed.password` + `adminSeed.totpSecret` | bool + strings | Bootstrap admin login. Default OFF. Flip on for first install only; the Job is idempotent on subsequent reconciles. |
+
+### Provisioning the first admin
+
+After first install with sensible `schat-helm-values` overrides:
+
+```bash
+# Inside the in-cluster schat-helm-values Secret values.yaml blob, add:
+adminSeed:
+  enabled: true
+  email: "admin@kalki.local"
+  password: "<a strong password you'll remember>"
+  totpSecret: "<base32 no-padding TOTP secret — share with admin via secure channel>"
+
+# Then trigger a HelmRelease reconcile to fire the Job:
+flux reconcile helmrelease schat -n kalki
+
+# Verify:
+kubectl -n kalki logs job/schat-admin-seed
+kubectl -n kalki exec sts/schat-postgres -- psql -U schat -d schat -c \
+  "SELECT email, role, created_at FROM admins;"
+```
+
+The Job re-fires on every subsequent HelmRelease upgrade. Because the seed
+code uses `INSERT … ON CONFLICT (email) DO UPDATE`, that's idempotent — the
+password + TOTP secret in `schat-helm-values` are the source of truth. To
+rotate either, edit the Secret and reconcile.
 
 ## Render diff between two versions of the chart
 
