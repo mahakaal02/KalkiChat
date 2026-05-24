@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -30,11 +32,39 @@ class _State extends ConsumerState<UserDetailScreen> {
   final TextEditingController _reply = TextEditingController();
   bool _busy = false;
   String? _err;
+  Timer? _poll;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // HTTP backfill safety net: any message the WS missed (registered
+    // device race, transient disconnect, app cold-started after the user
+    // had already sent) gets fetched as ciphertext, decrypted locally,
+    // and relayed to /admin-sync/inbound. Fires on open AND every 5s so
+    // a one-time fetch failure self-heals.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref
+          .read(adminChatControllerProvider.notifier)
+          .backfillFromServer(widget.userId)
+          .then((_) {
+        if (mounted) _load();
+      });
+    });
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (!mounted) return;
+      await ref
+          .read(adminChatControllerProvider.notifier)
+          .backfillFromServer(widget.userId);
+      if (mounted) unawaited(_load());
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _reply.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {

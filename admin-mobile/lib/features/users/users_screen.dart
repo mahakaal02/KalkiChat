@@ -37,9 +37,32 @@ class _State extends ConsumerState<UsersScreen> {
   @override
   Widget build(BuildContext context) {
     final AsyncValue<List<Map<String, dynamic>>> users = ref.watch(usersProvider(_q));
+    final AdminChatState chat = ref.watch(adminChatControllerProvider);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Users'),
+        title: Row(
+          children: <Widget>[
+            const Text('Users'),
+            const SizedBox(width: 8),
+            // Status pill: green = WS connected, red = disconnected. Lives
+            // in the appbar so the admin sees it across navigations and
+            // immediately knows if "messages aren't arriving" is a
+            // connectivity issue vs. a real "no messages" state.
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: chat.connected
+                    ? const Color(0x4400AA66)
+                    : const Color(0x44CC3333),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                chat.connected ? 'online' : 'offline',
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          ],
+        ),
         actions: <Widget>[
           IconButton(
             icon: const Icon(Icons.history),
@@ -55,6 +78,17 @@ class _State extends ConsumerState<UsersScreen> {
       ),
       body: Column(
         children: <Widget>[
+          if (chat.lastError != null)
+            Container(
+              width: double.infinity,
+              color: const Color(0x33FFAA00),
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                'Chat: ${chat.lastError!}',
+                style: const TextStyle(
+                    fontSize: 12, color: Colors.amberAccent),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(12),
             child: TextField(

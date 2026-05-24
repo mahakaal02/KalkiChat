@@ -200,7 +200,18 @@ class AdminLocalDb {
 
   // ---- Message persistence ------------------------------------------------
 
-  Future<void> insertMessage({
+  /// Insert one decrypted message. [id] is used as the row primary key:
+  /// pass the server's `msg_...` id whenever you have it (inbound,
+  /// backfill via HTTP, post-`message.persisted` outbound) so that
+  /// duplicate-arrivals via different paths (live WS + HTTP backfill,
+  /// say) idempotently collapse onto the same row. Outbound messages
+  /// composed locally before the server has assigned an id can still
+  /// pass a temporary UUID — they'll get a different row, which is OK
+  /// because we don't fetch them back from the server.
+  ///
+  /// Returns `true` if a new row was inserted, `false` if a row with
+  /// that id already existed (i.e. dedupe kicked in).
+  Future<bool> insertMessage({
     required String id,
     required String peerDeviceId,
     String? userId,
@@ -208,15 +219,20 @@ class AdminLocalDb {
     required Uint8List envelope,
     String? plaintext,
   }) async {
-    await _db.insert('messages', <String, Object?>{
-      'id': id,
-      'peer_device_id': peerDeviceId,
-      'user_id': userId,
-      'direction': direction,
-      'envelope': envelope,
-      'plaintext': plaintext,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-    });
+    final int n = await _db.insert(
+      'messages',
+      <String, Object?>{
+        'id': id,
+        'peer_device_id': peerDeviceId,
+        'user_id': userId,
+        'direction': direction,
+        'envelope': envelope,
+        'plaintext': plaintext,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    return n != 0;
   }
 
   /// Return messages exchanged with any device belonging to [userId].

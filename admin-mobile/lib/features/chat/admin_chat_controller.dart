@@ -190,6 +190,15 @@ class AdminChatController extends StateNotifier<AdminChatState> {
   /// that never get a persisted reply leak but the map is small.
   final Map<String, String> _pendingOutboundPlaintext = <String, String>{};
 
+  /// Server message ids we've already processed (decrypted + persisted +
+  /// relayed). Used to dedupe between live WS events and the HTTP
+  /// backfill path on user_detail_screen open — without this, opening
+  /// the screen during an active conversation would double-insert.
+  /// Populated lazily from the local DB on first backfill request per
+  /// user; kept in memory for the session.
+  final Set<String> _seenServerIds = <String>{};
+  bool _seenSeeded = false;
+
   Future<void> _handleEvent(Map<String, dynamic> ev) async {
     final String type = ev['type'] as String? ?? '';
     try {
@@ -328,14 +337,17 @@ class AdminChatController extends StateNotifier<AdminChatState> {
     final String userId =
         await _resolveUserIdForDevice(senderDeviceId) ?? '';
     final String plaintext = utf8.decode(pt);
+    // Use the server id as the local row PK so the HTTP-backfill path
+    // dedupes for free against this WS arrival.
     await db.insertMessage(
-      id: const Uuid().v4(),
+      id: serverMessageId.isNotEmpty ? serverMessageId : const Uuid().v4(),
       peerDeviceId: senderDeviceId,
       userId: userId,
       direction: 'in',
       envelope: envBytes,
       plaintext: plaintext,
     );
+    _seenServerIds.add(serverMessageId);
     await _relayInbound(serverMessageId, plaintext);
     _ackServer(serverMessageId);
     state = state.copyWith(lastMessageAt: DateTime.now(), lastError: null);
@@ -384,16 +396,86 @@ class AdminChatController extends StateNotifier<AdminChatState> {
         await _resolveUserIdForDevice(senderDeviceId) ?? '';
     final String plaintext = utf8.decode(pt);
     await db.insertMessage(
-      id: const Uuid().v4(),
+      id: serverMessageId.isNotEmpty ? serverMessageId : const Uuid().v4(),
       peerDeviceId: senderDeviceId,
       userId: userId,
       direction: 'in',
       envelope: envBytes,
       plaintext: plaintext,
     );
+    _seenServerIds.add(serverMessageId);
     await _relayInbound(serverMessageId, plaintext);
     _ackServer(serverMessageId);
     state = state.copyWith(lastMessageAt: DateTime.now(), lastError: null);
+  }
+
+  /// HTTP fallback: pull the ciphertext conversation for [userId] from
+  /// the backend, decrypt any messages we haven't seen yet, persist +
+  /// relay them. Called from the user_detail_screen on open so that
+  /// any message the WS missed (race, dropped connection, app started
+  /// after the user sent) still becomes visible — and gets relayed to
+  /// admin-web through the normal /admin-sync/inbound path.
+  ///
+  /// Idempotent thanks to the PK-on-server-id scheme used by
+  /// _handleBootstrap / _handleSteadyState above.
+  Future<void> backfillFromServer(String userId) async {
+    if (_db == null) return;
+    if (!_seenSeeded) {
+      // Lazy-seed the dedupe set from local DB so messages we already
+      // decrypted in a previous app session aren't re-processed.
+      final List<Map<String, Object?>> rows =
+          await _db!.messagesForUser(userId);
+      for (final Map<String, Object?> r in rows) {
+        final String? id = r['id'] as String?;
+        if (id != null && id.startsWith('msg_')) {
+          _seenServerIds.add(id);
+        }
+      }
+      _seenSeeded = true;
+    }
+    try {
+      final r = await _api.get('/v1/admin/users/$userId/conversation');
+      if (r.statusCode != 200) return;
+      final List<dynamic> msgs =
+          ((r.data as Map?)?['messages'] as List<dynamic>?) ??
+              const <dynamic>[];
+      for (final dynamic m in msgs) {
+        final Map<String, dynamic> row =
+            (m as Map).cast<String, dynamic>();
+        final String serverId = row['id'] as String? ?? '';
+        if (serverId.isEmpty || _seenServerIds.contains(serverId)) continue;
+        final String senderDevice =
+            row['sender_device_id'] as String? ?? '';
+        final String envB64 = row['envelope'] as String? ?? '';
+        final String sigB64 = row['signature'] as String? ?? '';
+        if (envB64.isEmpty || senderDevice.isEmpty) continue;
+
+        // Mirror the normal _handleIncoming path so all the X3DH /
+        // ratchet machinery stays in one place.
+        try {
+          final Uint8List envBytes =
+              Uint8List.fromList(base64.decode(envB64));
+          final Envelope env = Envelope.fromBytes(envBytes);
+          final Uint8List signature =
+              Uint8List.fromList(base64.decode(sigB64));
+          if (env.isBootstrap) {
+            await _handleBootstrap(
+                env, signature, envBytes, senderDevice, serverId);
+          } else {
+            await _handleSteadyState(
+                env, signature, envBytes, senderDevice, serverId);
+          }
+        } catch (e) {
+          // Don't poison the whole loop on one bad envelope; let the
+          // rest decrypt. Surface the error for visibility.
+          state = state.copyWith(
+              lastError: 'backfill decrypt failed for $serverId: $e');
+        }
+      }
+    } catch (e) {
+      state =
+          state.copyWith(lastError: 'backfill fetch failed: $e');
+    }
   }
 
   /// We need to group messages from a device under that device's owning
