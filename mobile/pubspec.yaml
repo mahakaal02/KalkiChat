@@ -36,8 +36,14 @@ dependencies:
 
   # Networking
   dio: ^5.7.0
-  http_certificate_pinning: ^3.0.1
   web_socket_channel: ^3.0.1
+  # Chain-walking SPKI cert pinning. Replaces http_certificate_pinning
+  # (which only hashed serverCertificates[0] / the leaf, forcing a
+  # 90-day APK rebuild cadence on every Let's Encrypt leaf rotation).
+  # The new plugin walks the whole chain and accepts on any-match, so
+  # pinning to the LE R13 intermediate's SPKI is stable for years.
+  schat_cert_pinning:
+    path: ../packages/schat_cert_pinning
 
   # Push
   firebase_core: ^3.6.0

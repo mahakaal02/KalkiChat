@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http_certificate_pinning/http_certificate_pinning.dart';
+import 'package:schat_cert_pinning/schat_cert_pinning.dart';
 
 import 'security/keystore.dart';
 
@@ -18,16 +18,21 @@ class AdminEnv {
     'WS_URL',
     defaultValue: 'wss://kalki-chat-backend.cloud.podstack.ai/v1/ws',
   );
+  // SPKI cert pins — SHA-256(SubjectPublicKeyInfo), base64.
+  // The schat_cert_pinning plugin walks the full TLS chain and accepts
+  // if any cert matches any pin, so pinning to the LE R13 intermediate
+  // (stable for years) means leaf rotations don't break the APK. See
+  // mobile/lib/env.dart for the full explanation.
   static const List<String> spkiPins = <String>[
-    // PRIMARY — LE R13 intermediate SPKI (stable for years).
+    // PRIMARY — LE R13 intermediate. Stable for years.
     String.fromEnvironment(
       'SPKI_PIN_PRIMARY',
       defaultValue: 'AlSQhgtJirc8ahLyekmtX+Iw+v46yPYRLJt9Cq1GlB0=',
     ),
-    // BACKUP — current leaf for cloud.podstack.ai (rotates ~90d).
+    // BACKUP — current leaf SPKI. Safety net only.
     String.fromEnvironment(
       'SPKI_PIN_BACKUP',
-      defaultValue: 'TyR2l7eGIMRhcXuPTJTDCobMvwvlSR26TJHAm5ckR+s=',
+      defaultValue: 'G+NL1xCWI8JwTcCg6ze1z3a7jjHjblqPf0yYb1IOxuA=',
     ),
   ];
 
@@ -63,12 +68,13 @@ class AdminApi {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (RequestOptions opts, RequestInterceptorHandler h) async {
         if (!AdminEnv.devAllowHttp) {
+          // Chain-walking SPKI pin check. See
+          // packages/schat_cert_pinning/lib/schat_cert_pinning.dart.
           try {
-            await HttpCertificatePinning.check(
+            await SchatCertPinning.check(
               serverURL: opts.uri.toString(),
-              sha: SHA.SHA256,
-              allowedSHAFingerprints: AdminEnv.spkiPins,
-              timeout: 10,
+              allowedSpkiSha256Base64: AdminEnv.spkiPins,
+              timeoutSeconds: 10,
             );
           } catch (e) {
             return h.reject(DioException(

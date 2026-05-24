@@ -1,15 +1,21 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
-import 'package:http_certificate_pinning/http_certificate_pinning.dart';
+import 'package:schat_cert_pinning/schat_cert_pinning.dart';
 
 import '../security/keystore.dart';
 
-/// HTTPS client with SSL pinning and JWT injection.
+/// HTTPS client with SPKI cert pinning + JWT injection.
 ///
-/// Pins are SPKI-SHA256 hashes embedded at build time. Two pins are required
-/// so we can rotate the leaf without bricking installed apps. If neither pin
-/// matches, the request is hard-failed — no soft fallback to system trust.
+/// Pins are SHA-256 hashes of cert SubjectPublicKeyInfo, base64 encoded.
+/// The underlying [SchatCertPinning] plugin walks the **full TLS chain**
+/// — leaf, intermediates, root — and accepts the connection iff *any*
+/// cert's SPKI matches *any* allowed pin. That means we can pin to a
+/// long-lived intermediate (e.g. Let's Encrypt R13's public key) and
+/// the APK survives every 90-day leaf rotation without a rebuild.
+///
+/// If no pin matches, the request is hard-failed — no soft fallback to
+/// the bare system trust store.
 class ApiClient {
   ApiClient({
     required this.baseUrl,
@@ -39,13 +45,14 @@ class ApiClient {
           ));
         }
         if (!isHttp) {
-          // SSL pin check first (cheap, fail-fast).
+          // SPKI pin check first (cheap, fail-fast). Walks the chain;
+          // passes if any cert's SubjectPublicKeyInfo SHA-256 matches
+          // any allowed pin. See packages/schat_cert_pinning/.
           try {
-            await HttpCertificatePinning.check(
+            await SchatCertPinning.check(
               serverURL: opts.uri.toString(),
-              sha: SHA.SHA256,
-              allowedSHAFingerprints: spkiPins,
-              timeout: 10,
+              allowedSpkiSha256Base64: spkiPins,
+              timeoutSeconds: 10,
             );
           } catch (e) {
             return h.reject(DioException(

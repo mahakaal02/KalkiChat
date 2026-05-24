@@ -1,0 +1,36 @@
+name: schat_cert_pinning
+description: >
+  Public-key (SPKI) certificate pinning for KalkiChat's mobile apps.
+  Walks the full TLS chain (leaf + every intermediate up to the root) and
+  hashes each cert's SubjectPublicKeyInfo with SHA-256. A connection is
+  accepted iff *any* cert in the chain matches *any* allowed pin.
+  This lets us pin to a long-lived intermediate (e.g. Let's Encrypt R13)
+  instead of the short-lived leaf, eliminating the 90-day APK rebuild
+  cadence that whole-cert leaf-pinning libraries force.
+
+  Replaces `http_certificate_pinning` which only ever checks
+  serverCertificates[0] (the leaf).
+
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.5.4 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.8
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.schat.cert_pinning
+        pluginClass: SchatCertPinningPlugin
+      ios:
+        pluginClass: SchatCertPinningPlugin
