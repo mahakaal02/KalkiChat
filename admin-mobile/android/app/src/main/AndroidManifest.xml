@@ -1,4 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      INTERNET is REQUIRED for any HTTPS or WebSocket traffic. Until
+      this was added, release APKs were silently broken: the debug
+      variant manifest declared INTERNET (Flutter hot-reload needs it)
+      but the main manifest did not, so a release build produced an APK
+      where the very first socket open failed with EACCES. That bubbled
+      through schat_cert_pinning as HANDSHAKE_FAILED and then as a Dio
+      bad-certificate error, which was utterly misleading.
+
+      ACCESS_NETWORK_STATE is cheap to include and lets future
+      connectivity-aware UI work without a manifest update.
+    -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
     <application
         android:label="kalki_admin"
         android:name="${applicationName}"
