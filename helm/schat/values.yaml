@@ -152,7 +152,7 @@ adminWeb:
 # attachments per the deletion policy.
 retention:
   image: schat-retention
-  imageTag: 20260524T052211Z-99e98b2 # {"$imagepolicy": "flux-system:schat-retention:tag"}
+  imageTag: 20260524T052414Z-041a774 # {"$imagepolicy": "flux-system:schat-retention:tag"}
   replicas: 1
   # How often the sweep loop runs. Backend reads RETENTION_SWEEP_INTERVAL
   # as a Go duration string ("60s", "5m", etc.).
