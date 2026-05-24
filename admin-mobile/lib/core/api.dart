@@ -18,16 +18,23 @@ class AdminEnv {
     'WS_URL',
     defaultValue: 'wss://kalki-chat-backend.cloud.podstack.ai/v1/ws',
   );
+  // IMPORTANT misnomer: variable name `spkiPins` is historical. The
+  // http_certificate_pinning plugin we use does NOT do SPKI pinning —
+  // it hashes the whole DER-encoded LEAF cert with SHA-256 and compares
+  // as uppercase hex with no separators. Values below are formatted to
+  // match. See mobile/lib/env.dart for the full explanation + the
+  // openssl one-liner to refresh after Let's Encrypt rotates the leaf
+  // (currently expires 2026-07-31).
   static const List<String> spkiPins = <String>[
-    // PRIMARY — LE R13 intermediate SPKI (stable for years).
     String.fromEnvironment(
       'SPKI_PIN_PRIMARY',
-      defaultValue: 'AlSQhgtJirc8ahLyekmtX+Iw+v46yPYRLJt9Cq1GlB0=',
+      defaultValue:
+          'E5037E4421C077493BB270D3C635B26E066F4A16B5AEEEF1027CC20C19DAB613',
     ),
-    // BACKUP — current leaf for cloud.podstack.ai (rotates ~90d).
     String.fromEnvironment(
       'SPKI_PIN_BACKUP',
-      defaultValue: 'TyR2l7eGIMRhcXuPTJTDCobMvwvlSR26TJHAm5ckR+s=',
+      defaultValue:
+          'E5037E4421C077493BB270D3C635B26E066F4A16B5AEEEF1027CC20C19DAB613',
     ),
   ];
 
